@@ -1,0 +1,8 @@
+{
+  "name": "Obsidian Slate - 아키텍처 지식 관리 & AI 정제 시스템",
+  "description": "엔지니어 및 시스템 아키텍트를 위한 로컬 지식 관리, 지식 그래프, AI 정제 대기열 및 분류 가이드라인 PC/웹 작업 공간",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
