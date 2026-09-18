@@ -40,6 +40,7 @@ export interface NoteItem {
   readTime?: string;
   backlinksCount: number;
   author?: string;
+  content?: string;
   codeSnippet?: {
     filename: string;
     language: string;
@@ -60,6 +61,7 @@ export interface GraphNode {
   isCenter?: boolean;
   depth?: number;
   metrics?: string;
+  noteId?: string;
 }
 
 export interface GraphLink {

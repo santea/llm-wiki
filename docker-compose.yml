@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: obsidian_slate_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-obsidian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-slate_secure_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-knowledge_vault}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-obsidian} -d ${POSTGRES_DB:-knowledge_vault}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - slate_network
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: obsidian_slate_pgbouncer
+    restart: unless-stopped
+    environment:
+      DB_USER: ${POSTGRES_USER:-obsidian}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-slate_secure_pass}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-knowledge_vault}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 25
+      RESERVE_POOL_SIZE: 5
+      SERVER_IDLE_TIMEOUT: 600
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - slate_network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  slate_network:
+    driver: bridge

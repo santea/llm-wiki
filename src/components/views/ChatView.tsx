@@ -234,179 +234,212 @@ export const ChatView: React.FC<ChatViewProps> = ({
     setIsMentionOpen(false);
     setIsThinking(true);
 
-    // AI Response generation (RAG Search / Summarize / Update)
-    setTimeout(() => {
-      const lower = query.toLowerCase();
+    // AI Response generation (Real Gemini API with local RAG hybrid fallback)
+    (async () => {
+      try {
+        const lower = query.toLowerCase();
 
-      // Case 1: Modification / Update Request
-      if (
-        lower.includes('수정') ||
-        lower.includes('업데이트') ||
-        lower.includes('추가') ||
-        lower.includes('반영') ||
-        lower.includes('패치') ||
-        lower.includes('commit') ||
-        omniMode === 'edit'
-      ) {
-        // Find target note or default to first matching
-        const matched =
-          notes.find(
-            (n) =>
-              query.includes(n.title) ||
-              n.tags.some((t) => lower.includes(t.toLowerCase().replace('#', ''))) ||
-              lower.includes(n.category.toLowerCase())
-          ) || notes[0];
+        // Case 1: Modification / Update Request
+        if (
+          lower.includes('수정') ||
+          lower.includes('업데이트') ||
+          lower.includes('추가') ||
+          lower.includes('반영') ||
+          lower.includes('패치') ||
+          lower.includes('commit') ||
+          omniMode === 'edit'
+        ) {
+          // Find target note or default to first matching
+          const matched =
+            notes.find(
+              (n) =>
+                query.includes(n.title) ||
+                n.tags.some((t) => lower.includes(t.toLowerCase().replace('#', ''))) ||
+                lower.includes(n.category.toLowerCase())
+            ) || notes[0];
 
-        const aiResponse: ChatMessage = {
-          id: `ai-${Date.now()}`,
-          sender: 'assistant',
-          timestamp: '방금',
-          type: 'diff-proposal',
-          text: `'${matched.title}' 문서에 대한 요청 사항을 반영한 Diff Proposal입니다. 변경 내용을 확인 후 커밋해주세요.`,
-          diffProposal: {
-            targetDocId: matched.id,
-            targetDocTitle: matched.title,
-            targetDocLevel: matched.category === '인프라' ? 'L2 Infra' : 'L3 Module',
-            sectionTitle: '## 추가 규격 및 최적화 설정',
-            addedCount: 2,
-            lines: [
-              { lineNumber: 21, type: 'context', content: `// ${matched.title} 연관 컨텍스트` },
-              { lineNumber: 22, type: 'context', content: `기본 파라미터 및 보안 정책 유효성 검증 통과` },
-              {
-                lineNumber: 23,
-                type: 'added',
-                content: `- **AI 자동 추가 규칙:** 클러스터 가용성 보장을 위해 재시도 백오프(Exponential Backoff: base=500ms, max=5s)가 활성화되었습니다.`
-              },
-              {
-                lineNumber: 24,
-                type: 'added',
-                content: `- **연관 백링크:** [[${matched.title} 장애 대응 SOP]]`
-              }
-            ],
-            ruleCheckNote: `내부 시스템 규약 #RULE-${matched.category.toUpperCase()} 자동 정합성 테스트 통과.`,
-            committed: false
-          }
-        };
-        setMessages((prev) => [...prev, aiResponse]);
-        setIsThinking(false);
-        return;
-      }
-
-      // Case 2: Summarize Request
-      if (lower.includes('요약') || lower.includes('정리') || lower.includes('스펙') || lower.includes('summary')) {
-        // Filter notes by query context (e.g., infra vs code vs all)
-        let relevantNotes = notes;
-        if (lower.includes('인프라') || lower.includes('infra')) {
-          relevantNotes = notes.filter((n) => n.category === '인프라');
-        } else if (lower.includes('소스') || lower.includes('saga') || lower.includes('코드')) {
-          relevantNotes = notes.filter((n) => n.category === '소스코드');
-        } else if (lower.includes('db') || lower.includes('데이터베이스')) {
-          relevantNotes = notes.filter((n) => n.category === 'DB');
+          const aiResponse: ChatMessage = {
+            id: `ai-${Date.now()}`,
+            sender: 'assistant',
+            timestamp: '방금',
+            type: 'diff-proposal',
+            text: `'${matched.title}' 문서에 대한 요청 사항을 반영한 Diff Proposal입니다. 변경 내용을 확인 후 커밋해주세요.`,
+            diffProposal: {
+              targetDocId: matched.id,
+              targetDocTitle: matched.title,
+              targetDocLevel: matched.category === '인프라' ? 'L2 Infra' : 'L3 Module',
+              sectionTitle: '## 추가 규격 및 최적화 설정',
+              addedCount: 2,
+              lines: [
+                { lineNumber: 21, type: 'context', content: `// ${matched.title} 연관 컨텍스트` },
+                { lineNumber: 22, type: 'context', content: `기본 파라미터 및 보안 정책 유효성 검증 통과` },
+                {
+                  lineNumber: 23,
+                  type: 'added',
+                  content: `- **AI 자동 추가 규칙:** 클러스터 가용성 보장을 위해 재시도 백오프(Exponential Backoff: base=500ms, max=5s)가 활성화되었습니다.`
+                },
+                {
+                  lineNumber: 24,
+                  type: 'added',
+                  content: `- **연관 백링크:** [[${matched.title} 장애 대응 SOP]]`
+                }
+              ],
+              ruleCheckNote: `내부 시스템 규약 #RULE-${matched.category.toUpperCase()} 자동 정합성 테스트 통과.`,
+              committed: false
+            }
+          };
+          setMessages((prev) => [...prev, aiResponse]);
+          setIsThinking(false);
+          return;
         }
 
-        const topNote = relevantNotes[0] || notes[0];
+        // Case 2: Try real server Gemini RAG endpoint
+        let serverGeminiAnswer = '';
+        try {
+          const resp = await fetch('/api/ai/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: query,
+              contextNotes: notes.map((n) => ({
+                title: n.title,
+                excerpt: n.excerpt,
+                tags: n.tags
+              }))
+            })
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data && data.text && !data.fallback) {
+              serverGeminiAnswer = data.text;
+            }
+          }
+        } catch (e) {
+          console.warn('Gemini endpoint unreachable, using local RAG engine:', e);
+        }
+
+        // Case 3: Summarize Request
+        if (lower.includes('요약') || lower.includes('정리') || lower.includes('스펙') || lower.includes('summary')) {
+          let relevantNotes = notes;
+          if (lower.includes('인프라') || lower.includes('infra')) {
+            relevantNotes = notes.filter((n) => n.category === '인프라');
+          } else if (lower.includes('소스') || lower.includes('saga') || lower.includes('코드')) {
+            relevantNotes = notes.filter((n) => n.category === '소스코드');
+          } else if (lower.includes('db') || lower.includes('데이터베이스') || lower.includes('아키텍처')) {
+            relevantNotes = notes.filter((n) => n.category === 'DB' || n.id === 'note-sys-arch-spec');
+          }
+
+          const topNote = relevantNotes[0] || notes[0];
+
+          const aiResponse: ChatMessage = {
+            id: `ai-${Date.now()}`,
+            sender: 'assistant',
+            timestamp: '방금',
+            type: 'semantic-map',
+            text: serverGeminiAnswer || `요청하신 지식 문서 **${relevantNotes.length}건**에 대한 RAG 시맨틱 요약 결과입니다:`,
+            thinkingSteps: {
+              summary: `${relevantNotes.length}개 대상 노드 컨텍스트 취합 및 중복 백링크 필터링 완료`,
+              details: relevantNotes.slice(0, 3).map((n) => ({
+                icon: 'check_circle',
+                text: `[[${n.title}]] (매칭도 96.5%)`,
+                color: 'text-[#4edea3]'
+              }))
+            },
+            highlightTitle: topNote.title,
+            highlightSection: {
+              title: `핵심 아키텍처 요약 (${topNote.category})`,
+              desc: `${topNote.excerpt} 현재 시스템은 ${topNote.wordCount}단어로 구조화되어 있으며 백링크 ${topNote.backlinksCount}개가 실시간 연결되어 있습니다.`
+            },
+            warningCallout: {
+              title: '운영 준수 가이드라인',
+              desc: '해당 아키텍처는 무중단 배포 및 분산 환경의 멱등성 보장이 필수적이며, 카프카 토픽 및 DB 커넥션 풀 한도를 초과하지 않도록 주기적인 모니터링이 권장됩니다.'
+            },
+            backlinks: topNote.connectedNodes || ['[[Kafka 클러스터]]', '[[AWS RDS]]'],
+            actionPills: [
+              {
+                label: '문서 본문 열기',
+                icon: 'book',
+                actionType: 'open-doc',
+                payload: topNote.id
+              },
+              {
+                label: '그래프에서 위치',
+                icon: 'share',
+                actionType: 'graph-pos',
+                payload: topNote.id
+              }
+            ]
+          };
+          setMessages((prev) => [...prev, aiResponse]);
+          setIsThinking(false);
+          return;
+        }
+
+        // Case 4: Search or General Q&A (with Gemini answer if available)
+        const matchingNotes = notes.filter(
+          (n) =>
+            query.includes(n.title) ||
+            n.title.toLowerCase().includes(lower) ||
+            n.tags.some((t) => lower.includes(t.toLowerCase().replace('#', ''))) ||
+            n.excerpt.toLowerCase().includes(lower)
+        );
+
+        const matchedNote = matchingNotes.length > 0 ? matchingNotes[0] : notes[0];
 
         const aiResponse: ChatMessage = {
           id: `ai-${Date.now()}`,
           sender: 'assistant',
           timestamp: '방금',
           type: 'semantic-map',
-          text: `요청하신 지식 문서 **${relevantNotes.length}건**에 대한 RAG 시맨틱 요약 결과입니다:`,
+          text: serverGeminiAnswer
+            ? serverGeminiAnswer
+            : `검색어 관련 지식 그래프에서 **[[${matchedNote.title}]]** 문서 및 관련 노드를 탐색하였습니다:`,
           thinkingSteps: {
-            summary: `${relevantNotes.length}개 대상 노드 컨텍스트 취합 및 중복 백링크 필터링 완료`,
-            details: relevantNotes.slice(0, 3).map((n) => ({
-              icon: 'check_circle',
-              text: `[[${n.title}]] (매칭도 96.5%)`,
-              color: 'text-[#4edea3]'
-            }))
+            summary: serverGeminiAnswer
+              ? `Gemini 3.8 Flash RAG 추론 완료 • ${matchingNotes.length || 1}개 지식 노드 참조`
+              : `시맨틱 임베딩 유사도 91.8% • ${matchingNotes.length || 1}개 연관 문서 식별`,
+            details: [
+              {
+                icon: 'check_circle',
+                text: `[[${matchedNote.title}]] (정합도 높음)`,
+                color: 'text-[#4edea3]'
+              },
+              {
+                icon: 'link',
+                text: `카테고리: ${matchedNote.categoryFull}`,
+                color: 'text-[#4cd7f6]'
+              }
+            ]
           },
-          highlightTitle: topNote.title,
+          highlightTitle: matchedNote.title,
           highlightSection: {
-            title: `핵심 아키텍처 요약 (${topNote.category})`,
-            desc: `${topNote.excerpt} 현재 시스템은 ${topNote.wordCount}단어로 구조화되어 있으며 백링크 ${topNote.backlinksCount}개가 실시간 연결되어 있습니다.`
+            title: `상세 내용 및 아키텍처 규격`,
+            desc: matchedNote.excerpt
           },
-          warningCallout: {
-            title: '운영 준수 가이드라인',
-            desc: '해당 아키텍처는 무중단 배포 및 분산 환경의 멱등성 보장이 필수적이며, 카프카 토픽 및 DB 커넥션 풀 한도를 초과하지 않도록 주기적인 모니터링이 권장됩니다.'
-          },
-          backlinks: topNote.connectedNodes || ['[[Kafka 클러스터]]', '[[AWS RDS]]'],
+          backlinks: matchedNote.connectedNodes || ['[[Kafka 클러스터]]'],
           actionPills: [
             {
               label: '문서 본문 열기',
               icon: 'book',
               actionType: 'open-doc',
-              payload: topNote.id
+              payload: matchedNote.id
             },
             {
               label: '그래프에서 위치',
               icon: 'share',
               actionType: 'graph-pos',
-              payload: topNote.id
+              payload: matchedNote.id
             }
           ]
         };
+
         setMessages((prev) => [...prev, aiResponse]);
+      } catch (err) {
+        console.error('Error generating AI response:', err);
+      } finally {
         setIsThinking(false);
-        return;
       }
-
-      // Case 3: Search or General Q&A
-      const matchingNotes = notes.filter(
-        (n) =>
-          query.includes(n.title) ||
-          n.title.toLowerCase().includes(lower) ||
-          n.tags.some((t) => lower.includes(t.toLowerCase().replace('#', ''))) ||
-          n.excerpt.toLowerCase().includes(lower)
-      );
-
-      const matchedNote = matchingNotes.length > 0 ? matchingNotes[0] : notes[0];
-
-      const aiResponse: ChatMessage = {
-        id: `ai-${Date.now()}`,
-        sender: 'assistant',
-        timestamp: '방금',
-        type: 'semantic-map',
-        text: `검색어 관련 지식 그래프에서 **[[${matchedNote.title}]]** 문서 및 관련 노드를 탐색하였습니다:`,
-        thinkingSteps: {
-          summary: `시맨틱 임베딩 유사도 91.8% • ${matchingNotes.length || 1}개 연관 문서 식별`,
-          details: [
-            {
-              icon: 'check_circle',
-              text: `[[${matchedNote.title}]] (정합도 높음)`,
-              color: 'text-[#4edea3]'
-            },
-            {
-              icon: 'link',
-              text: `카테고리: ${matchedNote.categoryFull}`,
-              color: 'text-[#4cd7f6]'
-            }
-          ]
-        },
-        highlightTitle: matchedNote.title,
-        highlightSection: {
-          title: `상세 내용 및 아키텍처 규격`,
-          desc: matchedNote.excerpt
-        },
-        backlinks: matchedNote.connectedNodes || ['[[Kafka 클러스터]]'],
-        actionPills: [
-          {
-            label: '문서 본문 열기',
-            icon: 'book',
-            actionType: 'open-doc',
-            payload: matchedNote.id
-          },
-          {
-            label: '그래프에서 위치',
-            icon: 'share',
-            actionType: 'graph-pos',
-            payload: matchedNote.id
-          }
-        ]
-      };
-
-      setMessages((prev) => [...prev, aiResponse]);
-      setIsThinking(false);
-    }, 650);
+    })();
   };
 
   // Quick Action Pills click
@@ -781,6 +814,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
           <span className="text-[#4cd7f6]">Auto-Contextual</span>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5">
+          <button
+            onClick={() => handleSendMessage('시스템 아키텍처 및 DB 설계 문서 요약해줘')}
+            className="shrink-0 flex items-center gap-1.5 bg-[#1e1f26] hover:bg-[#282a30] border border-[#7c3aed]/40 px-3 py-1.5 rounded-full text-[#d2bbff] text-xs transition-colors shadow-sm font-medium"
+          >
+            <span>📐</span>
+            <span>시스템 아키텍처 & DB 설계 요약</span>
+          </button>
           <button
             onClick={() => handleSendMessage('최근 정제된 인프라 문서 요약해줘')}
             className="shrink-0 flex items-center gap-1.5 bg-[#1e1f26] hover:bg-[#282a30] border border-[#2e3547] px-3 py-1.5 rounded-full text-[#e2e2eb] text-xs transition-colors shadow-sm"

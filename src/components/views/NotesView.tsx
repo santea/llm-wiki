@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Search,
   Sparkles,
@@ -11,6 +11,7 @@ import {
   Pin,
   Clock,
   Link as LinkIcon,
+  Link2,
   BookOpen,
   FileCode,
   Copy,
@@ -22,15 +23,22 @@ import {
   Lightbulb,
   Plus,
   ArrowLeft,
-  MoreHorizontal
+  MoreHorizontal,
+  Database,
+  Server,
+  Edit3,
+  Save,
+  X
 } from 'lucide-react';
 import { NoteItem, Workspace } from '../../types';
+import { ArchitectureDiagram } from './ArchitectureDiagram';
 
 interface NotesViewProps {
   notes: NoteItem[];
   selectedNoteId: string | null;
   onSelectNote: (id: string | null) => void;
   onAddNote: (note: Partial<NoteItem>) => void;
+  onUpdateNote?: (note: NoteItem, toastMsg?: string) => void;
   onShowToast: (msg: string) => void;
   activeWorkspace: Workspace;
 }
@@ -40,6 +48,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
   selectedNoteId,
   onSelectNote,
   onAddNote,
+  onUpdateNote,
   onShowToast,
   activeWorkspace
 }) => {
@@ -50,9 +59,64 @@ export const NotesView: React.FC<NotesViewProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [backlinkAdded, setBacklinkAdded] = useState(false);
   const [isReRefining, setIsReRefining] = useState(false);
+  const [isEditingContent, setIsEditingContent] = useState(false);
+  const [editContentText, setEditContentText] = useState('');
+  const [editTitleText, setEditTitleText] = useState('');
 
   // If a note is selected, render the Detailed Note View (Image 7)
   const activeNote = notes.find((n) => n.id === selectedNoteId);
+
+  // 1. Calculate Unlinked Mentions: Other documents mentioned in this document's text or vice-versa without [[link]]
+  const unlinkedMentions = useMemo(() => {
+    if (!activeNote) return [];
+    const currentText = (activeNote.content || activeNote.excerpt || '').toLowerCase();
+    const connectedTitles = (activeNote.connectedNodes || []).map((t) =>
+      t.replace(/\[\[|\]\]/g, '').trim().toLowerCase()
+    );
+
+    return notes.filter((n) => {
+      if (n.id === activeNote.id) return false;
+      const targetTitle = n.title.toLowerCase();
+      // Check if target title already in connected nodes
+      if (connectedTitles.includes(targetTitle)) return false;
+
+      // Check if title is mentioned in current document text
+      const isMentionedInCurrent = currentText.includes(targetTitle);
+      // Or current note's title is mentioned in other note's text without link
+      const otherText = (n.content || n.excerpt || '').toLowerCase();
+      const isCurrentMentionedInOther = otherText.includes(activeNote.title.toLowerCase());
+
+      return isMentionedInCurrent || isCurrentMentionedInOther;
+    });
+  }, [activeNote, notes]);
+
+  // 2. Calculate AI Semantic Recommendations based on shared tags, tech keywords and similarity
+  const semanticRecommendations = useMemo(() => {
+    if (!activeNote) return [];
+    const connectedTitles = (activeNote.connectedNodes || []).map((t) =>
+      t.replace(/\[\[|\]\]/g, '').trim().toLowerCase()
+    );
+    const currentTags = (activeNote.tags || []).map((t) => t.toLowerCase().replace('#', ''));
+
+    return notes
+      .filter((n) => {
+        if (n.id === activeNote.id) return false;
+        const targetTitle = n.title.toLowerCase();
+        if (connectedTitles.includes(targetTitle)) return false;
+        return true;
+      })
+      .map((n) => {
+        const otherTags = (n.tags || []).map((t) => t.toLowerCase().replace('#', ''));
+        const sharedTags = currentTags.filter((t) => otherTags.includes(t));
+        const sameCategory = n.category === activeNote.category;
+        // Calculate similarity score
+        const score = Math.min(99, 68 + sharedTags.length * 10 + (sameCategory ? 15 : 0));
+        return { note: n, score, sharedTags };
+      })
+      .filter((item) => item.score >= 70)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+  }, [activeNote, notes]);
 
   // Quick capture submission handler
   const handleQuickCapture = () => {
@@ -164,12 +228,69 @@ export const NotesView: React.FC<NotesViewProps> = ({
 
           {/* Editable Title Row */}
           <div className="flex items-start justify-between gap-3 mt-1">
-            <h1 className="text-2xl font-bold text-[#e2e2eb] tracking-tight leading-snug flex-1">
-              {activeNote.title}
-            </h1>
-            <button className="p-2 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] transition-colors">
-              <MoreHorizontal className="w-4 h-4" />
-            </button>
+            {isEditingContent ? (
+              <input
+                type="text"
+                value={editTitleText}
+                onChange={(e) => setEditTitleText(e.target.value)}
+                className="text-2xl font-bold text-[#e2e2eb] tracking-tight leading-snug flex-1 bg-[#1e1f26] border border-[#7c3aed] rounded-lg px-3 py-1 focus:outline-none focus:ring-1 focus:ring-[#7c3aed]"
+                placeholder="문서 제목을 입력하세요"
+              />
+            ) : (
+              <h1 className="text-2xl font-bold text-[#e2e2eb] tracking-tight leading-snug flex-1">
+                {activeNote.title}
+              </h1>
+            )}
+            <div className="flex items-center gap-1.5">
+              {!isEditingContent ? (
+                <button
+                  onClick={() => {
+                    setIsEditingContent(true);
+                    setEditTitleText(activeNote.title);
+                    setEditContentText(activeNote.content || activeNote.excerpt);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#4cd7f6] text-xs font-mono transition-colors"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>직접 편집</span>
+                </button>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      if (onUpdateNote) {
+                        const updated: NoteItem = {
+                          ...activeNote,
+                          title: editTitleText.trim() || activeNote.title,
+                          content: editContentText,
+                          excerpt: editContentText.slice(0, 150) + '...',
+                          updatedAt: '방금 전 (사용자 직접 수정)',
+                          statusBadge: '수정 완료',
+                          wordCount: editContentText.split(/\s+/).filter(Boolean).length
+                        };
+                        onUpdateNote(updated);
+                      }
+                      setIsEditingContent(false);
+                      onShowToast('문서 내용이 성공적으로 저장 및 갱신되었습니다.');
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#007650] hover:bg-[#008f62] text-white text-xs font-mono font-medium transition-colors shadow-sm"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>저장</span>
+                  </button>
+                  <button
+                    onClick={() => setIsEditingContent(false)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#958da1] hover:text-[#e2e2eb] text-xs font-mono transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>취소</span>
+                  </button>
+                </div>
+              )}
+              <button className="p-2 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] transition-colors">
+                <MoreHorizontal className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -236,71 +357,210 @@ export const NotesView: React.FC<NotesViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="w-16 shrink-0">연계 노드</span>
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1e1f26] text-[#4cd7f6] font-mono text-[11px] cursor-pointer hover:bg-[#282a30]">
-                  <LinkIcon className="w-3 h-3" />
-                  <span>[[결제 모듈 v2]]</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* AI Semantic Suggestion Callout */}
-          <div className="relative overflow-hidden p-4 rounded-xl bg-[#1e1f26] border border-[#7c3aed]/40 shadow-md">
-            <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full bg-[#4cd7f6]/10 blur-xl pointer-events-none"></div>
-            <div className="flex items-start gap-3">
-              <div className="w-7 h-7 rounded-lg bg-[#03b5d3]/20 text-[#4cd7f6] flex items-center justify-center shrink-0">
-                <Lightbulb className="w-4 h-4" />
-              </div>
-              <div className="space-y-1.5 flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono text-[#4cd7f6] uppercase tracking-wider font-semibold">
-                    AI 시맨틱 감지
-                  </span>
-                  <span className="text-xs font-mono text-[#4edea3]">94% 일치도</span>
-                </div>
-                <p className="text-xs text-[#e2e2eb] leading-relaxed">
-                  이 문서는 <span className="text-[#4cd7f6] font-medium">‘소스코드 및 구현’</span>{' '}
-                  카테고리로 자동 분류되었습니다. 참조 중인{' '}
-                  <span className="px-1.5 py-0.5 rounded bg-[#33343b] text-[#d2bbff] font-mono text-[11px]">
-                    [[주문 서비스 ERD]]
-                  </span>{' '}
-                  엔터티와 연관 관계가 매우 높습니다.
-                </p>
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button
-                    onClick={() => onShowToast('제안을 무시했습니다.')}
-                    className="px-2.5 py-1 rounded bg-[#282a30] hover:bg-[#33343b] text-[#958da1] text-xs transition-colors"
-                  >
-                    무시
-                  </button>
+              <div className="flex items-start gap-2">
+                <span className="w-16 shrink-0 mt-0.5">연계 노드</span>
+                <div className="flex flex-wrap items-center gap-1.5 flex-1">
+                  {(activeNote.connectedNodes && activeNote.connectedNodes.length > 0
+                    ? activeNote.connectedNodes
+                    : ['[[결제 모듈 v2]]']
+                  ).map((node) => (
+                    <div
+                      key={node}
+                      onClick={() => onShowToast(`백링크 노드 ${node} 연결 탐색`)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1e1f26] text-[#4cd7f6] font-mono text-[11px] cursor-pointer hover:bg-[#282a30] hover:text-[#acedff] transition-colors border border-[#2e3547]"
+                    >
+                      <LinkIcon className="w-3 h-3" />
+                      <span>{node}</span>
+                    </div>
+                  ))}
                   <button
                     onClick={handleAddBacklink}
-                    className={`flex items-center gap-1 px-3 py-1 rounded text-xs font-medium transition-all ${
-                      backlinkAdded
-                        ? 'bg-[#007650] text-white'
-                        : 'bg-[#7c3aed] hover:bg-[#6d28d9] text-white'
-                    }`}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] hover:text-white font-mono text-[11px] transition-colors"
                   >
-                    {backlinkAdded ? <Check className="w-3.5 h-3.5" /> : <LinkIcon className="w-3.5 h-3.5" />}
-                    <span>{backlinkAdded ? '연결 완료' : '백링크 추가'}</span>
+                    <Plus className="w-3 h-3 text-[#4edea3]" />
+                    <span>노드 추가</span>
                   </button>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Context Markdown Text Block */}
-          <div className="space-y-3">
-            <h2 className="text-lg font-semibold text-[#e2e2eb] flex items-center gap-2">
-              <span className="text-[#7c3aed]">#</span> 오케스트레이션 기반 분산 트랜잭션 정의
-            </h2>
-            <p className="text-sm text-[#ccc3d8] leading-relaxed">
-              Saga 패턴은 각 서비스의 로컬 트랜잭션을 순차적으로 트리거하며, 실패 시 보상 트랜잭션(Compensating
-              Transaction)을 발행하여 데이터 일관성을 유지합니다. 아래는 주문 접수 단계의 코디네이터 로직입니다.
-            </p>
+          {/* Smart Connection Hub: Alternative Ways of Connecting Notes */}
+          <div className="rounded-xl bg-[#191b22] border border-[#2e3547] p-4 space-y-4 shadow-md">
+            <div className="flex items-center justify-between pb-2 border-b border-[#2e3547]/60">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#7c3aed]" />
+                <h3 className="text-xs font-mono font-semibold uppercase tracking-wider text-[#e2e2eb]">
+                  스마트 지식 연결 허브 (Smart Connection Hub)
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono text-[#958da1]">
+                수동 타이핑 외 2가지 자동 연결 지원
+              </span>
+            </div>
+
+            {/* Sub-section 1: AI Semantic Similarity Auto-Links */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-mono text-[#4edea3]">
+                  <Zap className="w-3.5 h-3.5" />
+                  <span className="font-semibold">1. AI 임베딩 시맨틱 추천 연결 (Semantic Links)</span>
+                </div>
+                <span className="text-[11px] font-mono text-[#958da1]">기술 스택 & 맥락 기반</span>
+              </div>
+
+              {semanticRecommendations.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {semanticRecommendations.map(({ note: rNote, score, sharedTags }) => (
+                    <div
+                      key={rNote.id}
+                      className="flex items-center justify-between p-2.5 rounded-lg bg-[#14151b] border border-[#2e3547] hover:border-[#4edea3]/40 transition-colors"
+                    >
+                      <div className="min-w-0 flex-1 mr-2">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            onClick={() => onSelectNote(rNote.id)}
+                            className="text-xs font-medium text-[#e2e2eb] hover:text-[#4edea3] cursor-pointer truncate font-mono"
+                          >
+                            [[{rNote.title}]]
+                          </span>
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-[#007650]/20 text-[#4edea3] shrink-0 border border-[#007650]/40">
+                            {score}% 유사
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-[#958da1] truncate mt-0.5">
+                          {sharedTags.length > 0
+                            ? `공유: ${sharedTags.map((t) => `#${t}`).join(' ')}`
+                            : `도메인: ${rNote.categoryFull}`}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newLink = `[[${rNote.title}]]`;
+                          const updatedNodes = [...(activeNote.connectedNodes || []), newLink];
+                          if (onUpdateNote) {
+                            onUpdateNote(
+                              {
+                                ...activeNote,
+                                connectedNodes: updatedNodes,
+                                backlinksCount: updatedNodes.length
+                              },
+                              `'${rNote.title}' 문서가 AI 시맨틱 백링크로 즉시 연결되었습니다.`
+                            );
+                          }
+                        }}
+                        className="flex items-center gap-1 px-2 py-1 rounded bg-[#282a30] hover:bg-[#383a45] text-[#4edea3] text-[11px] font-mono transition-colors shrink-0"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>원클릭 연결</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-lg bg-[#14151b] border border-[#232630] text-xs font-mono text-[#958da1]">
+                  현재 문서와 연관된 모든 고유사도 문서가 이미 연결되어 있습니다.
+                </div>
+              )}
+            </div>
+
+            {/* Sub-section 2: Unlinked Mentions Detection */}
+            <div className="space-y-2 pt-2 border-t border-[#2e3547]/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-mono text-[#e0b6ff]">
+                  <Link2 className="w-3.5 h-3.5" />
+                  <span className="font-semibold">2. 언링크드 멘션 탐지 (Unlinked Mentions)</span>
+                </div>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-[#282a30] text-[#ccc3d8]">
+                  {unlinkedMentions.length}건 감지됨
+                </span>
+              </div>
+
+              {unlinkedMentions.length > 0 ? (
+                <div className="space-y-1.5">
+                  {unlinkedMentions.map((uNote) => (
+                    <div
+                      key={uNote.id}
+                      className="flex items-center justify-between p-2 rounded-lg bg-[#14151b] border border-[#232630] text-xs font-mono"
+                    >
+                      <div className="min-w-0 flex-1 mr-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            onClick={() => onSelectNote(uNote.id)}
+                            className="text-[#e2e2eb] hover:text-[#e0b6ff] cursor-pointer font-medium truncate"
+                          >
+                            {uNote.title}
+                          </span>
+                          <span className="text-[10px] text-[#958da1]">
+                            본문 내 일반 텍스트로 언급됨
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newLink = `[[${uNote.title}]]`;
+                          const updatedNodes = [...(activeNote.connectedNodes || []), newLink];
+                          if (onUpdateNote) {
+                            onUpdateNote(
+                              {
+                                ...activeNote,
+                                connectedNodes: updatedNodes,
+                                backlinksCount: updatedNodes.length
+                              },
+                              `'${uNote.title}' 멘션이 정식 백링크로 승격되었습니다.`
+                            );
+                          }
+                        }}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#282a30] hover:bg-[#383a45] text-[#e0b6ff] text-[11px] font-mono transition-colors shrink-0"
+                      >
+                        <Link2 className="w-3 h-3" />
+                        <span>백링크로 승격</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-lg bg-[#14151b] border border-[#232630] text-xs font-mono text-[#958da1]">
+                  본문 내에 `[[ ]]` 없이 언급된 미연결 문서가 없습니다. (모든 키워드 정합성 일치)
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Context Markdown Text Block / Direct Editor */}
+          {isEditingContent ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-mono text-[#958da1]">
+                <span className="flex items-center gap-1.5 text-[#4cd7f6]">
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>마크다운 본문 편집 모드 (Markdown & SQL Supported)</span>
+                </span>
+                <span>{editContentText.length} 자</span>
+              </div>
+              <textarea
+                value={editContentText}
+                onChange={(e) => setEditContentText(e.target.value)}
+                rows={16}
+                className="w-full p-4 rounded-xl bg-[#0c0e14] border border-[#7c3aed] text-xs font-mono text-[#e2e2eb] leading-relaxed focus:outline-none focus:ring-1 focus:ring-[#7c3aed] resize-y"
+                placeholder="마크다운 형식으로 내용을 입력하세요 (예: # 제목, [[백링크]], 코드 블록 등)"
+              />
+            </div>
+          ) : activeNote.content ? (
+            <div className="space-y-4">
+              <div className="p-4 sm:p-5 rounded-xl bg-[#0c0e14] border border-[#2e3547] text-xs font-mono text-[#e2e2eb] whitespace-pre-wrap leading-relaxed overflow-x-auto max-h-[480px]">
+                {activeNote.content}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <h2 className="text-lg font-semibold text-[#e2e2eb] flex items-center gap-2">
+                <span className="text-[#7c3aed]">#</span> {activeNote.title}
+              </h2>
+              <p className="text-sm text-[#ccc3d8] leading-relaxed">
+                {activeNote.excerpt}
+              </p>
+            </div>
+          )}
 
           {/* Code Block with Syntax Highlighting & Line numbers */}
           {activeNote.codeSnippet && (
@@ -339,76 +599,80 @@ export const NotesView: React.FC<NotesViewProps> = ({
             </div>
           )}
 
-          {/* Interactive Flowchart Diagram (Saga Orchestrator Workflow) */}
-          <div className="p-4 rounded-xl bg-[#191b22] border border-[#2e3547] space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Workflow className="w-4 h-4 text-[#4edea3]" />
-                <span className="text-sm font-medium text-[#e2e2eb]">Saga Orchestrator Workflow</span>
+          {/* Architecture Topology Diagram or Saga Flowchart */}
+          {activeNote.id === 'note-sys-arch-spec' || activeNote.category === 'DB' ? (
+            <ArchitectureDiagram />
+          ) : (
+            <div className="p-4 rounded-xl bg-[#191b22] border border-[#2e3547] space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Workflow className="w-4 h-4 text-[#4edea3]" />
+                  <span className="text-sm font-medium text-[#e2e2eb]">Saga Orchestrator Workflow</span>
+                </div>
+                <span className="text-[11px] font-mono text-[#958da1]">Interactive Flow (Mermaid-v11)</span>
               </div>
-              <span className="text-[11px] font-mono text-[#958da1]">Interactive Flow (Mermaid-v11)</span>
+
+              {/* Visual SVG Diagram */}
+              <div className="w-full bg-[#0c0e14] rounded-lg p-3 flex justify-center overflow-x-auto">
+                <svg
+                  className="w-full max-w-[360px] h-[140px]"
+                  viewBox="0 0 340 130"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  {/* Step 1: Order Initiated */}
+                  <rect x="10" y="45" width="85" height="40" rx="6" fill="#1e1f26" stroke="#2e3547" />
+                  <text x="52" y="65" fill="#e2e2eb" fontFamily="JetBrains Mono" fontSize="10" fontWeight="500" textAnchor="middle">
+                    주문 요청
+                  </text>
+                  <text x="52" y="77" fill="#958da1" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle">
+                    Order Initiated
+                  </text>
+
+                  {/* Arrow 1 to 2 */}
+                  <path d="M95 65 H125" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" />
+                  <polygon points="125,62 131,65 125,68" fill="#7c3aed" />
+
+                  {/* Step 2: Saga Coordinator */}
+                  <rect x="131" y="38" width="96" height="54" rx="6" fill="#282a30" stroke="#7c3aed" />
+                  <rect x="133" y="40" width="92" height="50" rx="4" fill="#191b22" />
+                  <text x="179" y="60" fill="#4cd7f6" fontFamily="JetBrains Mono" fontSize="10" fontWeight="600" textAnchor="middle">
+                    Saga Coordinator
+                  </text>
+                  <text x="179" y="73" fill="#4edea3" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle">
+                    Orchestration
+                  </text>
+                  <circle cx="179" cy="83" r="2.5" fill="#4edea3" />
+
+                  {/* Arrow to Step 3 */}
+                  <path d="M227 55 Q245 55 245 35 H255" fill="none" stroke="#4cd7f6" strokeWidth="1.5" strokeDasharray="3 3" />
+                  <polygon points="255,32 260,35 255,38" fill="#4cd7f6" />
+
+                  {/* Arrow to Step 4 */}
+                  <path d="M227 75 Q245 75 245 95 H255" fill="none" stroke="#ffb4ab" strokeWidth="1.5" />
+                  <polygon points="255,92 260,95 255,98" fill="#ffb4ab" />
+
+                  {/* Step 3: Success Target */}
+                  <rect x="260" y="15" width="70" height="36" rx="5" fill="#1e1f26" stroke="#4edea3" strokeWidth="0.8" />
+                  <text x="295" y="33" fill="#4edea3" fontFamily="JetBrains Mono" fontSize="9" textAnchor="middle">
+                    결제/재고 확정
+                  </text>
+                  <text x="295" y="43" fill="#958da1" fontFamily="JetBrains Mono" fontSize="7" textAnchor="middle">
+                    Commit Event
+                  </text>
+
+                  {/* Step 4: Compensation Target */}
+                  <rect x="260" y="78" width="70" height="36" rx="5" fill="#1e1f26" stroke="#ffb4ab" strokeWidth="0.8" />
+                  <text x="295" y="96" fill="#ffb4ab" fontFamily="JetBrains Mono" fontSize="9" textAnchor="middle">
+                    보상 롤백
+                  </text>
+                  <text x="295" y="106" fill="#958da1" fontFamily="JetBrains Mono" fontSize="7" textAnchor="middle">
+                    Rollback Trigger
+                  </text>
+                </svg>
+              </div>
             </div>
-
-            {/* Visual SVG Diagram */}
-            <div className="w-full bg-[#0c0e14] rounded-lg p-3 flex justify-center overflow-x-auto">
-              <svg
-                className="w-full max-w-[360px] h-[140px]"
-                viewBox="0 0 340 130"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                {/* Step 1: Order Initiated */}
-                <rect x="10" y="45" width="85" height="40" rx="6" fill="#1e1f26" stroke="#2e3547" />
-                <text x="52" y="65" fill="#e2e2eb" fontFamily="JetBrains Mono" fontSize="10" fontWeight="500" textAnchor="middle">
-                  주문 요청
-                </text>
-                <text x="52" y="77" fill="#958da1" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle">
-                  Order Initiated
-                </text>
-
-                {/* Arrow 1 to 2 */}
-                <path d="M95 65 H125" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" />
-                <polygon points="125,62 131,65 125,68" fill="#7c3aed" />
-
-                {/* Step 2: Saga Coordinator */}
-                <rect x="131" y="38" width="96" height="54" rx="6" fill="#282a30" stroke="#7c3aed" />
-                <rect x="133" y="40" width="92" height="50" rx="4" fill="#191b22" />
-                <text x="179" y="60" fill="#4cd7f6" fontFamily="JetBrains Mono" fontSize="10" fontWeight="600" textAnchor="middle">
-                  Saga Coordinator
-                </text>
-                <text x="179" y="73" fill="#4edea3" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle">
-                  Orchestration
-                </text>
-                <circle cx="179" cy="83" r="2.5" fill="#4edea3" />
-
-                {/* Arrow to Step 3 */}
-                <path d="M227 55 Q245 55 245 35 H255" fill="none" stroke="#4cd7f6" strokeWidth="1.5" strokeDasharray="3 3" />
-                <polygon points="255,32 260,35 255,38" fill="#4cd7f6" />
-
-                {/* Arrow to Step 4 */}
-                <path d="M227 75 Q245 75 245 95 H255" fill="none" stroke="#ffb4ab" strokeWidth="1.5" />
-                <polygon points="255,92 260,95 255,98" fill="#ffb4ab" />
-
-                {/* Step 3: Success Target */}
-                <rect x="260" y="15" width="70" height="36" rx="5" fill="#1e1f26" stroke="#4edea3" strokeWidth="0.8" />
-                <text x="295" y="33" fill="#4edea3" fontFamily="JetBrains Mono" fontSize="9" textAnchor="middle">
-                  결제/재고 확정
-                </text>
-                <text x="295" y="43" fill="#958da1" fontFamily="JetBrains Mono" fontSize="7" textAnchor="middle">
-                  Commit Event
-                </text>
-
-                {/* Step 4: Compensation Target */}
-                <rect x="260" y="78" width="70" height="36" rx="5" fill="#1e1f26" stroke="#ffb4ab" strokeWidth="0.8" />
-                <text x="295" y="96" fill="#ffb4ab" fontFamily="JetBrains Mono" fontSize="9" textAnchor="middle">
-                  보상 롤백
-                </text>
-                <text x="295" y="106" fill="#958da1" fontFamily="JetBrains Mono" fontSize="7" textAnchor="middle">
-                  Rollback Trigger
-                </text>
-              </svg>
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Bottom Floating Stats & AI Re-refine Bar */}

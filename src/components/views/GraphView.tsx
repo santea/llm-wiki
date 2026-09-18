@@ -11,21 +11,27 @@ import {
   Link2,
   ChevronRight,
   FileText,
-  Layers
+  Layers,
+  Zap,
+  Tag
 } from 'lucide-react';
-import { GraphNode, GraphLink } from '../../types';
+import { GraphNode, GraphLink, NoteItem } from '../../types';
 
 interface GraphViewProps {
   nodes: GraphNode[];
   links: GraphLink[];
+  notes?: NoteItem[];
   onOpenDocument: (noteId: string) => void;
+  onUpdateNote?: (note: NoteItem, toastMsg?: string) => void;
   onShowToast: (msg: string) => void;
 }
 
 export const GraphView: React.FC<GraphViewProps> = ({
   nodes,
   links,
+  notes = [],
   onOpenDocument,
+  onUpdateNote,
   onShowToast
 }) => {
   const [selectedNodeId, setSelectedNodeId] = useState<string>('center');
@@ -33,6 +39,8 @@ export const GraphView: React.FC<GraphViewProps> = ({
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const [depthLevel, setDepthLevel] = useState(2);
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string | null>(null);
+  const [connectionMode, setConnectionMode] = useState<'all' | 'explicit' | 'semantic' | 'cluster'>('all');
+  const [inspectorTab, setInspectorTab] = useState<'backlinks' | 'semantic' | 'unlinked'>('backlinks');
   const [isBookmarked, setIsBookmarked] = useState(false);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || nodes[0];
@@ -55,6 +63,13 @@ export const GraphView: React.FC<GraphViewProps> = ({
   // Connected backlinks data
   const backlinks = [
     {
+      id: 'node-sys-arch-spec',
+      title: '[[시스템 아키텍처 & DB 설계]]',
+      category: 'DB & RAG',
+      tag: 'Core Spec',
+      dotColor: 'bg-[#d2bbff]'
+    },
+    {
       id: 'rds',
       title: '[[AWS RDS]]',
       category: '데이터베이스',
@@ -72,8 +87,49 @@ export const GraphView: React.FC<GraphViewProps> = ({
       id: 'toss',
       title: '[[토스페이먼츠 API]]',
       category: '외부 연계',
-      tag: 'PG Webhook',
+      tag: 'PG 연동',
       dotColor: 'bg-[#ffb4ab]'
+    }
+  ];
+
+  // AI Semantic Recommended Links for Graph
+  const semanticTies = [
+    {
+      id: 'sem-1',
+      title: '[[분산 트랜잭션 코디네이터]]',
+      category: '인프라',
+      similarity: '96% 일치',
+      reason: 'Saga 패턴 보상 트랜잭션 의존성'
+    },
+    {
+      id: 'sem-2',
+      title: '[[주문 결제 웹훅 처리기]]',
+      category: '연계',
+      similarity: '91% 일치',
+      reason: '토스페이먼츠 비동기 이벤트 핸들링'
+    },
+    {
+      id: 'sem-3',
+      title: '[[PostgreSQL 인덱스 튜닝]]',
+      category: 'DB',
+      similarity: '87% 일치',
+      reason: '주문 테이블 쿼리 지연 최적화'
+    }
+  ];
+
+  // Unlinked mentions in other docs
+  const graphUnlinkedMentions = [
+    {
+      id: 'unlinked-1',
+      docTitle: '배포 파이프라인 v2 가이드',
+      snippet: '...해당 서비스는 주문 모듈 v2의 상태 전이를 감지하여...',
+      targetLink: '[[주문 모듈 v2]]'
+    },
+    {
+      id: 'unlinked-2',
+      docTitle: '장애 대응 SOP (결제 지연)',
+      snippet: '...Kafka 클러스터 랙 발생 시 결제 모듈의 타임아웃 설정을...',
+      targetLink: '[[Kafka 클러스터]]'
     }
   ];
 
@@ -107,33 +163,64 @@ export const GraphView: React.FC<GraphViewProps> = ({
         </button>
       </div>
 
-      {/* Category Legend Bar */}
-      <div className="px-4 py-2 bg-[#111319] border-b border-[#1f2432] flex items-center gap-2 overflow-x-auto no-scrollbar z-10">
-        {[
-          { id: 'infra', label: '인프라', color: '#d2bbff' },
-          { id: 'code', label: '소스코드', color: '#4cd7f6' },
-          { id: 'db', label: '데이터베이스', color: '#4edea3' },
-          { id: 'workflow', label: '워크플로우', color: '#acedff' },
-          { id: 'external', label: '외부 연계', color: '#ffb4ab' }
-        ].map((cat) => (
-          <button
-            key={cat.id}
-            onClick={() => {
-              setActiveCategoryFilter(activeCategoryFilter === cat.id ? null : cat.id);
-            }}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-mono transition-all shrink-0 ${
-              activeCategoryFilter === cat.id
-                ? 'bg-[#282a30] text-[#e2e2eb] border-[#e2e2eb]'
-                : 'bg-[#191b22] text-[#ccc3d8] border-[#2e3547] hover:bg-[#1e1f26]'
-            }`}
-          >
-            <span
-              className="w-2 h-2 rounded-full shadow-sm"
-              style={{ backgroundColor: cat.color }}
-            ></span>
-            <span>{cat.label}</span>
-          </button>
-        ))}
+      {/* Category Legend & Connection Mode Bar */}
+      <div className="px-4 py-2 bg-[#111319] border-b border-[#1f2432] flex flex-wrap items-center justify-between gap-2 z-10">
+        {/* Connection Mode Pill Selector */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <span className="text-[11px] font-mono text-[#958da1] mr-1 flex items-center gap-1">
+            <Layers className="w-3 h-3 text-[#4cd7f6]" /> 연결 방식:
+          </span>
+          {[
+            { id: 'all', label: '모든 연결' },
+            { id: 'explicit', label: '📌 명시적 백링크' },
+            { id: 'semantic', label: '🧠 AI 시맨틱 추천' },
+            { id: 'cluster', label: '🏷️ 태그 클러스터' }
+          ].map((mode) => (
+            <button
+              key={mode.id}
+              onClick={() => {
+                setConnectionMode(mode.id as any);
+                onShowToast(`그래프 연결 모드: ${mode.label}(으)로 필터링`);
+              }}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono transition-all shrink-0 ${
+                connectionMode === mode.id
+                  ? 'bg-[#7c3aed] text-white font-medium shadow-sm'
+                  : 'bg-[#191b22] text-[#958da1] hover:text-[#e2e2eb] border border-[#2e3547]'
+              }`}
+            >
+              <span>{mode.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Category Filters */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          {[
+            { id: 'infra', label: '인프라', color: '#d2bbff' },
+            { id: 'code', label: '소스코드', color: '#4cd7f6' },
+            { id: 'db', label: '데이터베이스', color: '#4edea3' },
+            { id: 'workflow', label: '워크플로우', color: '#acedff' },
+            { id: 'external', label: '외부 연계', color: '#ffb4ab' }
+          ].map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => {
+                setActiveCategoryFilter(activeCategoryFilter === cat.id ? null : cat.id);
+              }}
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-mono transition-all shrink-0 ${
+                activeCategoryFilter === cat.id
+                  ? 'bg-[#282a30] text-[#e2e2eb] border-[#e2e2eb]'
+                  : 'bg-[#191b22] text-[#ccc3d8] border-[#2e3547] hover:bg-[#1e1f26]'
+              }`}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full shadow-sm"
+                style={{ backgroundColor: cat.color }}
+              ></span>
+              <span>{cat.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Main Interactive Graph Canvas Container */}
@@ -181,29 +268,83 @@ export const GraphView: React.FC<GraphViewProps> = ({
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
+            <filter id="glow-green" x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
           </defs>
 
-          {/* Background Mesh */}
-          <g opacity="0.35" stroke="#2e3547" strokeDasharray="2,3" strokeWidth="0.75">
-            <line x1="110" y1="135" x2="60" y2="210" />
-            <line x1="60" y1="210" x2="135" y2="295" />
-            <line x1="310" y1="270" x2="330" y2="185" />
-            <line x1="320" y1="128" x2="275" y2="85" />
-            <line x1="110" y1="135" x2="180" y2="70" />
-          </g>
+          {/* Background Tag Cluster Mesh */}
+          {(connectionMode === 'all' || connectionMode === 'cluster') && (
+            <g opacity="0.45" stroke="#2e3547" strokeDasharray="3,3" strokeWidth="0.8">
+              <line x1="110" y1="135" x2="60" y2="210" />
+              <line x1="60" y1="210" x2="135" y2="295" />
+              <line x1="310" y1="270" x2="330" y2="185" />
+              <line x1="320" y1="128" x2="275" y2="85" />
+              <line x1="110" y1="135" x2="180" y2="70" />
+            </g>
+          )}
 
-          {/* Connecting Links to Center */}
-          <g strokeLinecap="round">
-            <line x1="200" y1="200" x2="110" y2="135" stroke="url(#edge-code-infra)" strokeWidth="2.2" opacity="0.95" />
-            <line x1="200" y1="200" x2="145" y2="285" stroke="url(#edge-code-infra)" strokeWidth="2" opacity="0.85" />
-            <line x1="200" y1="200" x2="310" y2="270" stroke="url(#edge-code-db)" strokeWidth="2.2" opacity="0.95" />
-            <line x1="200" y1="200" x2="320" y2="128" stroke="url(#edge-code-ext)" strokeWidth="2.2" opacity="0.95" />
-            <line x1="200" y1="200" x2="230" y2="330" stroke="#4edea3" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.7" />
-            <line x1="200" y1="200" x2="70" y2="230" stroke="#acedff" strokeWidth="1.8" opacity="0.75" />
-            <line x1="200" y1="200" x2="260" y2="75" stroke="#acedff" strokeWidth="1.8" opacity="0.75" />
-          </g>
+          {/* Explicit User Backlinks (Solid Lines) */}
+          {(connectionMode === 'all' || connectionMode === 'explicit') && (
+            <g strokeLinecap="round">
+              <line x1="200" y1="200" x2="110" y2="135" stroke="url(#edge-code-infra)" strokeWidth="2.4" opacity="0.95" />
+              <line x1="200" y1="200" x2="145" y2="285" stroke="url(#edge-code-infra)" strokeWidth="2" opacity="0.85" />
+              <line x1="200" y1="200" x2="310" y2="270" stroke="url(#edge-code-db)" strokeWidth="2.4" opacity="0.95" />
+              <line x1="200" y1="200" x2="320" y2="128" stroke="url(#edge-code-ext)" strokeWidth="2.4" opacity="0.95" />
+              <line x1="200" y1="200" x2="70" y2="230" stroke="#acedff" strokeWidth="1.8" opacity="0.75" />
+              <line x1="200" y1="200" x2="260" y2="75" stroke="#acedff" strokeWidth="1.8" opacity="0.75" />
+              <line x1="200" y1="200" x2="190" y2="60" stroke="#d2bbff" strokeWidth="2.2" strokeDasharray="4,2" opacity="0.95" />
+            </g>
+          )}
+
+          {/* AI Semantic Similarity Links (Dashed Neon Green/Cyan with similarity tags) */}
+          {(connectionMode === 'all' || connectionMode === 'semantic') && (
+            <g strokeLinecap="round">
+              {/* Semantic link 1: DB Spec <-> RDS */}
+              <line x1="190" y1="60" x2="310" y2="270" stroke="#4edea3" strokeWidth="2" strokeDasharray="5,4" opacity="0.9" filter="url(#glow-green)" />
+              <rect x="236" y="152" width="48" height="15" rx="3" fill="#0c0e14" stroke="#4edea3" strokeWidth="0.8" />
+              <text x="260" y="163" fill="#4edea3" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle" fontWeight="bold">
+                96% 시맨틱
+              </text>
+
+              {/* Semantic link 2: Kafka <-> Toss API */}
+              <line x1="110" y1="135" x2="320" y2="128" stroke="#4cd7f6" strokeWidth="1.8" strokeDasharray="4,4" opacity="0.85" filter="url(#glow-cyan)" />
+              <rect x="200" y="122" width="46" height="15" rx="3" fill="#0c0e14" stroke="#4cd7f6" strokeWidth="0.8" />
+              <text x="223" y="133" fill="#4cd7f6" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle" fontWeight="bold">
+                91% 시맨틱
+              </text>
+
+              {/* Semantic link 3: Center <-> Workflow */}
+              <line x1="200" y1="200" x2="230" y2="330" stroke="#4edea3" strokeWidth="1.8" strokeDasharray="4,3" opacity="0.85" />
+              <rect x="204" y="258" width="46" height="15" rx="3" fill="#0c0e14" stroke="#4edea3" strokeWidth="0.8" />
+              <text x="227" y="269" fill="#4edea3" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle">
+                87% 시맨틱
+              </text>
+            </g>
+          )}
 
           {/* Outer Connected Nodes */}
+          {/* System Architecture & DB Spec */}
+          <g
+            className="cursor-pointer group"
+            transform="translate(190,60)"
+            onClick={() => {
+              setSelectedNodeId('node-sys-arch-spec');
+              onShowToast('시스템 아키텍처 & DB 설계 노드가 선택되었습니다.');
+            }}
+          >
+            <circle r="15" fill="#191b22" stroke="#7c3aed" strokeWidth="1.5" />
+            <circle r="10" fill="#d2bbff" filter="url(#glow-violet)" opacity="0.95" />
+            <circle r="4" fill="#25005a" />
+            <text x="0" y="-18" textAnchor="middle" fill="#d2bbff" fontFamily="JetBrains Mono" fontSize="10" fontWeight="600">
+              시스템 아키텍처 & DB
+            </text>
+          </g>
+
           {/* AWS RDS */}
           <g
             className="cursor-pointer group"
@@ -430,9 +571,11 @@ export const GraphView: React.FC<GraphViewProps> = ({
             <div className="flex items-center gap-2 mb-0.5">
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#4cd7f6]/15 text-[#4cd7f6] font-mono text-[11px]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#4cd7f6]"></span>
-                소스코드 및 구현
+                {selectedNode.category || '지식 노드'}
               </span>
-              <span className="text-[11px] font-mono text-[#958da1]">v2.4.1-rc</span>
+              <span className="text-[11px] font-mono text-[#958da1]">
+                {selectedNode.id === 'node-sys-arch-spec' ? 'v1.0-RAG' : 'v2.4.1-rc'}
+              </span>
             </div>
             <h2 className="text-xl font-bold text-[#e2e2eb] tracking-tight truncate">
               {selectedNode.label}
@@ -452,8 +595,9 @@ export const GraphView: React.FC<GraphViewProps> = ({
               <Bookmark className="w-4 h-4" />
             </button>
             <button
-              onClick={() => onOpenDocument('note-saga')}
+              onClick={() => onOpenDocument(selectedNode.noteId || (selectedNode.id === 'node-sys-arch-spec' ? 'note-sys-arch-spec' : 'note-saga'))}
               className="w-8 h-8 rounded-lg bg-[#1e1f26] border border-[#2e3547] flex items-center justify-center text-[#958da1] hover:text-[#e2e2eb] hover:bg-[#282a30] transition-colors"
+              title="문서 열기"
             >
               <ExternalLink className="w-4 h-4" />
             </button>
@@ -476,47 +620,146 @@ export const GraphView: React.FC<GraphViewProps> = ({
           </p>
         </div>
 
-        {/* Connected Backlinks List */}
+        {/* Connection Inspector Tabs */}
         <div className="space-y-2 mb-4">
-          <div className="flex items-center justify-between px-0.5">
-            <span className="text-xs font-mono text-[#958da1] flex items-center gap-1">
-              <Link2 className="w-3.5 h-3.5" /> 연결된 백링크 (7개)
-            </span>
-            <span
-              onClick={() => onShowToast('연결된 7개 역링크 목록이 정렬되었습니다.')}
-              className="text-xs font-mono text-[#d2bbff] cursor-pointer hover:underline"
+          <div className="flex items-center gap-2 border-b border-[#2e3547] pb-1.5 overflow-x-auto no-scrollbar">
+            <button
+              onClick={() => setInspectorTab('backlinks')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-mono transition-colors shrink-0 ${
+                inspectorTab === 'backlinks'
+                  ? 'bg-[#282a30] text-[#e2e2eb] font-semibold border border-[#3e4559]'
+                  : 'text-[#958da1] hover:text-[#ccc3d8]'
+              }`}
             >
-              모두 보기
-            </span>
+              <Link2 className="w-3.5 h-3.5 text-[#4cd7f6]" />
+              <span>연결된 백링크 ({backlinks.length})</span>
+            </button>
+            <button
+              onClick={() => setInspectorTab('semantic')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-mono transition-colors shrink-0 ${
+                inspectorTab === 'semantic'
+                  ? 'bg-[#282a30] text-[#4edea3] font-semibold border border-[#007650]/50'
+                  : 'text-[#958da1] hover:text-[#4edea3]'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 text-[#4edea3]" />
+              <span>AI 시맨틱 추천 ({semanticTies.length})</span>
+            </button>
+            <button
+              onClick={() => setInspectorTab('unlinked')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-mono transition-colors shrink-0 ${
+                inspectorTab === 'unlinked'
+                  ? 'bg-[#282a30] text-[#d2bbff] font-semibold border border-[#7c3aed]/50'
+                  : 'text-[#958da1] hover:text-[#d2bbff]'
+              }`}
+            >
+              <Tag className="w-3.5 h-3.5 text-[#d2bbff]" />
+              <span>언링크드 멘션 ({graphUnlinkedMentions.length})</span>
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            {backlinks.map((b) => (
-              <div
-                key={b.id}
-                onClick={() => {
-                  setSelectedNodeId(b.id);
-                  onShowToast(`${b.title} 노드로 초점이 이동되었습니다.`);
-                }}
-                className="flex items-center justify-between p-2.5 rounded-lg bg-[#1e1f26] hover:bg-[#282a30] border border-[#2e3547] transition-colors cursor-pointer group"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={`w-2 h-2 rounded-full ${b.dotColor} shrink-0`}></span>
-                  <span className="text-xs font-mono text-[#e2e2eb] truncate">{b.title}</span>
+          {/* Tab 1: Connected Backlinks */}
+          {inspectorTab === 'backlinks' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              {backlinks.map((b) => (
+                <div
+                  key={b.id}
+                  onClick={() => {
+                    setSelectedNodeId(b.id);
+                    onShowToast(`${b.title} 노드로 초점이 이동되었습니다.`);
+                  }}
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-[#1e1f26] hover:bg-[#282a30] border border-[#2e3547] transition-colors cursor-pointer group"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`w-2 h-2 rounded-full ${b.dotColor} shrink-0`}></span>
+                    <span className="text-xs font-mono text-[#e2e2eb] truncate">{b.title}</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-[#958da1] group-hover:text-[#e2e2eb] shrink-0 text-[10px] font-mono">
+                    <span>{b.tag}</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 text-[#958da1] group-hover:text-[#e2e2eb] shrink-0 text-[11px] font-mono">
-                  <span>{b.tag}</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Tab 2: AI Semantic Recommended Ties */}
+          {inspectorTab === 'semantic' && (
+            <div className="space-y-2">
+              <div className="text-[11px] font-mono text-[#958da1] flex items-center justify-between">
+                <span>벡터 유사도 기반 추천 연결 (사용자가 직접 타이핑하지 않아도 AI가 탐지)</span>
+                <span className="text-[#4edea3]">HNSW 코사인 유사도</span>
               </div>
-            ))}
-          </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {semanticTies.map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex flex-col justify-between p-2.5 rounded-lg bg-[#14151b] border border-[#2e3547] hover:border-[#4edea3]/40 transition-colors"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="text-xs font-mono text-[#e2e2eb] font-semibold truncate">
+                          {s.title}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-[#007650]/20 text-[#4edea3] shrink-0 border border-[#007650]/40">
+                          {s.similarity}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[#958da1] line-clamp-2 leading-relaxed mb-2">
+                        {s.reason}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        onShowToast(`'${s.title}' 문서가 AI 시맨틱 연결로 그래프에 바인딩되었습니다.`);
+                      }}
+                      className="flex items-center justify-center gap-1 w-full py-1 rounded bg-[#282a30] hover:bg-[#33343b] text-[#4edea3] text-[11px] font-mono font-medium transition-colors"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>원클릭 연결</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 3: Unlinked Mentions */}
+          {inspectorTab === 'unlinked' && (
+            <div className="space-y-2">
+              <div className="text-[11px] font-mono text-[#958da1]">
+                다른 문서 본문에서 [[...]] 없이 언급된 비공식 참조 목록
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {graphUnlinkedMentions.map((u) => (
+                  <div
+                    key={u.id}
+                    className="flex items-center justify-between p-2.5 rounded-lg bg-[#14151b] border border-[#232630] text-xs font-mono"
+                  >
+                    <div className="min-w-0 flex-1 mr-2">
+                      <div className="text-[#d2bbff] font-semibold truncate">{u.docTitle}</div>
+                      <p className="text-[10px] text-[#958da1] truncate mt-0.5">{u.snippet}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        onShowToast(`'${u.targetLink}' 키워드가 정식 백링크로 승격되어 연결되었습니다.`);
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#282a30] hover:bg-[#383a45] text-[#d2bbff] text-[10px] font-mono transition-colors shrink-0 flex items-center gap-1"
+                    >
+                      <Link2 className="w-3 h-3" />
+                      <span>백링크 승격</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Primary Action Buttons */}
         <div className="grid grid-cols-2 gap-3 pt-1">
           <button
-            onClick={() => onOpenDocument('note-saga')}
+            onClick={() => onOpenDocument(selectedNode?.noteId || 'note-saga')}
             className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-semibold text-xs transition-all shadow-md active:scale-98"
           >
             <FileText className="w-4 h-4" />

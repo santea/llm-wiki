@@ -8,6 +8,11 @@ import {
   HierarchyNode,
   SystemNotification
 } from '../types';
+import {
+  SYSTEM_ARCHITECTURE_DESIGN_NOTE,
+  ARCHITECTURE_GRAPH_NODE,
+  ARCHITECTURE_GRAPH_LINKS
+} from './architectureDesignNote';
 
 export const INITIAL_WORKSPACES: Workspace[] = [
   {
@@ -101,6 +106,7 @@ export const INITIAL_RULES: ClassificationRule[] = [
 ];
 
 export const INITIAL_NOTES: NoteItem[] = [
+  SYSTEM_ARCHITECTURE_DESIGN_NOTE,
   {
     id: 'note-saga',
     title: '분산 주문 트랜잭션 Saga 패턴 구현체',
@@ -206,6 +212,7 @@ export const INITIAL_NOTES: NoteItem[] = [
 ];
 
 export const INITIAL_GRAPH_NODES: GraphNode[] = [
+  ARCHITECTURE_GRAPH_NODE,
   {
     id: 'center',
     label: '결제 트랜잭션 엔진',
@@ -291,6 +298,7 @@ export const INITIAL_GRAPH_NODES: GraphNode[] = [
 ];
 
 export const INITIAL_GRAPH_LINKS: GraphLink[] = [
+  ...ARCHITECTURE_GRAPH_LINKS,
   { source: 'center', target: 'kafka', label: 'Produce Event', gradient: 'url(#edge-code-infra)' },
   { source: 'center', target: 'rds', label: 'State Commit', gradient: 'url(#edge-code-db)' },
   { source: 'center', target: 'toss', label: 'Webhook Call', gradient: 'url(#edge-code-ext)' },

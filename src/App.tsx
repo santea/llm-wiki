@@ -103,9 +103,9 @@ export default function App() {
     setActiveTab('notes');
   };
 
-  const handleUpdateNote = (updatedNote: NoteItem) => {
+  const handleUpdateNote = (updatedNote: NoteItem, toastMsg?: string) => {
     setNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? updatedNote : n)));
-    showToast(`"${updatedNote.title}" 노트가 AI 제안에 따라 성공적으로 패치 및 커밋되었습니다.`);
+    showToast(toastMsg || `"${updatedNote.title}" 노트가 AI 제안에 따라 성공적으로 패치 및 커밋되었습니다.`);
   };
 
   const handleApproveTriageCard = (id: string) => {
@@ -317,6 +317,7 @@ export default function App() {
                       handleAddNote(fullNote);
                     }}
                     onShowToast={showToast}
+                    onUpdateNote={handleUpdateNote}
                     activeWorkspace={activeWorkspace}
                   />
                 )}
@@ -325,7 +326,9 @@ export default function App() {
                   <GraphView
                     nodes={mockGraphNodes}
                     links={mockGraphLinks}
+                    notes={notes}
                     onOpenDocument={handleOpenDocument}
+                    onUpdateNote={handleUpdateNote}
                     onShowToast={showToast}
                   />
                 )}
