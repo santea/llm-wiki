@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Terminal, X, CheckCircle2, Sparkles } from 'lucide-react';
+import { Terminal, X, CheckCircle2, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
+import { testRulesInSandbox } from '../../api';
 
 interface SandboxTestModalProps {
   isOpen: boolean;
@@ -19,36 +20,39 @@ export const SandboxTestModal: React.FC<SandboxTestModalProps> = ({
   const [result, setResult] = useState<{
     categories: string[];
     guidelineAction: string;
+    securityNotices?: string[];
     maskedOutput: string;
   }>({
     categories: ['시스템 인프라 정보', '외부 시스템 연계 정보'],
     guidelineAction: '사내 IP 마스킹 처리 실행 (10.0.4.12 → [IP MASKED])',
+    securityNotices: ['내부 IP가 마스킹되었습니다.'],
     maskedOutput: 'AWS EKS 클러스터 IP: [IP MASKED]에 ingress-nginx 설정 후 POST /api/v1/auth 라우팅 구성 완료함.'
   });
 
   if (!isOpen) return null;
 
-  const handleSimulate = () => {
+  const handleSimulate = async () => {
+    if (!testText.trim()) {
+      onShowToast('테스트할 텍스트를 입력해주세요.');
+      return;
+    }
+
     setIsSimulating(true);
-    setTimeout(() => {
-      setIsSimulating(false);
-      // Simulate dynamic masking if IP exists
-      let masked = testText.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP MASKED]');
-      const hasPost = testText.includes('POST') || testText.includes('GET') || testText.includes('/api');
-      const hasInfra = testText.includes('EKS') || testText.includes('AWS') || testText.includes('IP');
-
-      const cats: string[] = [];
-      if (hasInfra) cats.push('시스템 인프라 정보');
-      if (hasPost) cats.push('외부 시스템 연계 정보');
-      if (cats.length === 0) cats.push('소스코드 및 구현 정보');
-
+    try {
+      const data = await testRulesInSandbox(testText);
       setResult({
-        categories: cats,
-        guidelineAction: '사내 인프라 IP 마스킹 및 엔드포인트 규격 추출 완료',
-        maskedOutput: masked
+        categories: data.categories || ['시스템 인프라 정보'],
+        guidelineAction: data.guidelineAction || '표준 아키텍처 규격 준수 확인',
+        securityNotices: data.securityNotices || [],
+        maskedOutput: data.maskedOutput || testText
       });
-      onShowToast('규칙 샌드박스 시뮬레이션 판정이 완료되었습니다.');
-    }, 600);
+      onShowToast('AI 실시간 규칙 판정이 완료되었습니다.');
+    } catch (err: any) {
+      console.error(err);
+      onShowToast('규칙 판정 중 오류가 발생했습니다.');
+    } finally {
+      setIsSimulating(false);
+    }
   };
 
   return (
@@ -110,6 +114,19 @@ export const SandboxTestModal: React.FC<SandboxTestModalProps> = ({
           <div className="text-[11px] font-mono text-[#ccc3d8] bg-[#0c0e14] p-2 rounded">
             {result.guidelineAction}
           </div>
+
+          {result.securityNotices && result.securityNotices.length > 0 && (
+            <div className="space-y-1 bg-[#241a0e] border border-[#f59e0b]/30 p-2 rounded text-[11px] text-[#f59e0b]">
+              <span className="font-semibold flex items-center gap-1 font-mono">
+                <ShieldCheck className="w-3 h-3" /> 보안 점검 권고:
+              </span>
+              <ul className="list-disc list-inside space-y-0.5 text-[10px] text-[#ccc3d8]">
+                {result.securityNotices.map((sn, idx) => (
+                  <li key={idx}>{sn}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="space-y-1">
             <span className="text-[10px] font-mono text-[#958da1]">마스킹 적용 후 본문:</span>

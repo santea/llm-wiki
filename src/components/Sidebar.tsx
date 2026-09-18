@@ -14,7 +14,8 @@ import {
   ChevronLeft,
   PanelLeftClose,
   Bot,
-  MessageSquare
+  MessageSquare,
+  Sliders
 } from 'lucide-react';
 import { TabType, Workspace } from '../types';
 
@@ -27,7 +28,12 @@ export interface SidebarProps {
   activeWorkspace: Workspace;
   onSelectWorkspace: (ws: Workspace) => void;
   pendingTriageCount: number;
+  rulesCount?: number;
   onOpenNewNote: () => void;
+  popularTags?: string[];
+  totalNodesCount?: number;
+  syncPercentage?: number;
+  onSelectTagFilter?: (tag: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -39,7 +45,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeWorkspace,
   onSelectWorkspace,
   pendingTriageCount,
-  onOpenNewNote
+  rulesCount = 5,
+  onOpenNewNote,
+  popularTags = ['#PostgreSQL', '#pgvector', '#Kafka', '#Spring', '#Redis', '#AWS'],
+  totalNodesCount = 12,
+  syncPercentage = 100,
+  onSelectTagFilter
 }) => {
   const navItems = [
     {
@@ -84,7 +95,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: '분류 카테고리 & 룰',
       sublabel: 'Taxonomy Rules',
       icon: GitBranch,
-      badge: '5개'
+      badge: `${rulesCount}개`
+    },
+    {
+      id: 'prompts' as TabType,
+      label: '에이전트 프롬프트 허브',
+      sublabel: 'Prompt Orchestrator',
+      icon: Sliders,
+      badge: '6종 AI',
+      badgeColor: 'bg-[#7c3aed] text-white'
     }
   ];
 
@@ -206,13 +225,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Tag className="w-3 h-3 text-[#4edea3]" /> 주요 태그
             </div>
             <div className="flex flex-wrap gap-1 px-1">
-              {['#K8s', '#AWS', '#PostgreSQL', '#Kafka', '#Spring', '#Redis'].map((tag) => (
-                <span
+              {popularTags.map((tag) => (
+                <button
                   key={tag}
-                  className="px-1.5 py-0.5 rounded bg-[#191b22] hover:bg-[#282a30] text-[10px] font-mono text-[#ccc3d8] cursor-pointer transition-colors"
+                  onClick={() => {
+                    onSelectTab('notes');
+                    if (onSelectTagFilter) onSelectTagFilter(tag);
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-[#191b22] hover:bg-[#282a30] hover:text-[#d2bbff] text-[10px] font-mono text-[#ccc3d8] cursor-pointer transition-colors"
+                  title={`${tag} 태그로 필터링`}
                 >
                   {tag}
-                </span>
+                </button>
               ))}
             </div>
           </div>
@@ -229,10 +253,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <div className="flex items-center justify-between text-[10px] text-[#958da1]">
             <span>지식망 노드 색인</span>
-            <span className="font-mono text-[#e2e2eb]">148 nodes</span>
+            <span className="font-mono text-[#e2e2eb]">{totalNodesCount} nodes</span>
           </div>
           <div className="w-full bg-[#191b22] h-1.5 rounded-full overflow-hidden">
-            <div className="bg-gradient-to-r from-[#7c3aed] to-[#4cd7f6] h-full w-[94%]"></div>
+            <div
+              className="bg-gradient-to-r from-[#7c3aed] to-[#4cd7f6] h-full transition-all duration-500"
+              style={{ width: `${Math.min(100, Math.max(10, syncPercentage))}%` }}
+            ></div>
           </div>
         </div>
       </div>
@@ -251,12 +278,13 @@ export const MobileNavBar: React.FC<{
     { id: 'graph' as TabType, label: '그래프', icon: Network },
     { id: 'hierarchy' as TabType, label: '계층구조', icon: Layers },
     { id: 'refinery' as TabType, label: '정제', icon: Sparkles, badge: pendingCount },
-    { id: 'taxonomy' as TabType, label: '규칙', icon: GitBranch }
+    { id: 'taxonomy' as TabType, label: '규칙', icon: GitBranch },
+    { id: 'prompts' as TabType, label: '프롬프트', icon: Sliders }
   ];
 
   return (
     <nav className="shrink-0 w-full z-40 bg-[#0c0e14]/95 backdrop-blur-xl border-t border-[#1f2432] shadow-[0_-4px_20px_rgba(0,0,0,0.5)]">
-      <div className="grid grid-cols-6 items-center h-14 px-0.5">
+      <div className="grid grid-cols-7 items-center h-14 px-0.5">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;

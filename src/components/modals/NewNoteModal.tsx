@@ -44,6 +44,8 @@ export const NewNoteModal: React.FC<NewNoteModalProps> = ({
 
     const resolved = categoryMap[category] || { cat: '소스코드', full: '소스코드 및 구현 정보' };
 
+    const extractedLinks = (content.match(/\[\[(.*?)\]\]/g) || []).map((t) => t.trim());
+
     const newNote: NoteItem = {
       id: `note-${Date.now()}`,
       title: title.trim(),
@@ -52,16 +54,17 @@ export const NewNoteModal: React.FC<NewNoteModalProps> = ({
       tags: tagArray.length > 0 ? tagArray : ['#General'],
       statusBadge: 'AI 정제 완료',
       badgeType: 'ai-refined',
-      excerpt: content.slice(0, 80) || '방금 작성된 새로운 아키텍처 지식 문서입니다.',
+      excerpt: content.slice(0, 160) || '방금 작성된 새로운 아키텍처 지식 문서입니다.',
       updatedAt: '방금 전',
       author: '데브옵스 AI 코어',
-      wordCount: content.split(/\s+/).length || 50,
-      charCount: content.length || 200,
-      readTime: '2분 읽기',
-      backlinksCount: 2,
-      connectedNodes: ['[[Kafka 클러스터]]', '[[AWS RDS]]'],
+      wordCount: content.trim().split(/\s+/).filter(Boolean).length || 50,
+      charCount: content.length,
+      readTime: `${Math.max(1, Math.round(content.length / 500))}분 읽기`,
+      backlinksCount: extractedLinks.length,
+      connectedNodes: extractedLinks.length > 0 ? extractedLinks : ['[[시스템 아키텍처]]'],
+      content: content.trim(),
       codeSnippet: {
-        filename: 'NewSnippet.ts',
+        filename: `${title.replace(/\s+/g, '')}.ts`,
         language: 'TypeScript',
         code: content.trim() || '// 새로운 지식 스니펫'
       }

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Search,
   Sparkles,
@@ -28,10 +28,159 @@ import {
   Server,
   Edit3,
   Save,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 import { NoteItem, Workspace } from '../../types';
 import { ArchitectureDiagram } from './ArchitectureDiagram';
+import { MermaidRenderer } from './MermaidRenderer';
+import { MarkdownRenderer } from './MarkdownRenderer';
+
+// Helper to extract or generate dynamic Mermaid diagram for a document
+function getMermaidChartForNote(note: NoteItem): { chart: string; title: string } | null {
+  const content = note.content || note.excerpt || '';
+
+  // 1. Check for explicit ```mermaid code block in markdown
+  const mermaidMatch = content.match(/```mermaid\s*([\s\S]*?)```/);
+  if (mermaidMatch && mermaidMatch[1].trim()) {
+    return {
+      chart: mermaidMatch[1].trim(),
+      title: `${note.title} (인라인 시각화)`
+    };
+  }
+
+  const titleLower = note.title.toLowerCase();
+  const tagsStr = (note.tags || []).join(' ').toLowerCase();
+
+  // 2. Saga / Distributed Transaction
+  if (note.id === 'note-saga' || titleLower.includes('saga') || tagsStr.includes('saga')) {
+    return {
+      title: 'Saga 분산 오케스트레이터 보상 트랜잭션 흐름',
+      chart: `sequenceDiagram
+    autonumber
+    actor User as 사용자 (Client)
+    participant Ingress as API 게이트웨이
+    participant Saga as Saga 코디네이터
+    participant Payment as 결제 모듈
+    participant Stock as 재고 모듈
+    participant DLQ as 보상 큐 (Kafka DLQ)
+
+    User->>Ingress: 1. 주문 생성 요청 (POST /v2/orders)
+    Ingress->>Saga: 2. Saga 인스턴스 초기화 & 분산락 획득
+    Saga->>Payment: 3. 카카오페이 결제 승인 요청
+    alt 정상 승인
+        Payment-->>Saga: 200 OK (결제 성공)
+        Saga->>Stock: 4. 재고 차감 요청 (Deduct)
+        Stock-->>Saga: 재고 차감 완료
+        Saga-->>Ingress: 트랜잭션 커밋 완료 (COMPLETED)
+        Ingress-->>User: 201 Created (주문 성공)
+    else PG 타임아웃 / 잔액 부족
+        Payment--xSaga: 504 Gateway Timeout
+        Saga->>DLQ: 5. 보상 트랜잭션 이벤트 발행 (Compensate)
+        DLQ->>Stock: 6. 락 해제 및 보상 롤백
+        Saga-->>Ingress: 트랜잭션 롤백 (FAILED)
+        Ingress-->>User: 400 결제 실패 (정상 롤백됨)
+    end`
+    };
+  }
+
+  // 3. Redis / Sentinel / Redlock
+  if (
+    note.id === 'note-redis-sentinel' ||
+    note.id === 'note-redlock' ||
+    tagsStr.includes('redis') ||
+    tagsStr.includes('sentinel')
+  ) {
+    return {
+      title: 'Redis Cluster & Sentinel 쿼럼 장애 조치 (Failover) 토폴로지',
+      chart: `flowchart TD
+    Client["애플리케이션 클라이언트"] -->|마스터 주소 질의| Sentinel["Sentinel Quorum (쿼럼 = 2)"]
+    Sentinel -.->|PING 헬스체크| Master["Redis Master (10.0.1.50:6379)"]
+    Sentinel -.->|PING 헬스체크| Replica1["Redis Replica 1"]
+    Sentinel -.->|PING 헬스체크| Replica2["Redis Replica 2"]
+    Client -->|분산락 획득 (Redlock)| Master
+    Master -->|비동기 복제| Replica1
+    Master -->|비동기 복제| Replica2
+    subgraph Failover["자동 장애 복구 프로세스"]
+        Master -.->|다운 감지 (5,000ms)| Sentinel
+        Sentinel ==>|신규 마스터 승격 명령| Replica1
+    end`
+    };
+  }
+
+  // 4. Kafka / Messaging
+  if (
+    note.id === 'note-kafka-static-membership' ||
+    tagsStr.includes('kafka') ||
+    titleLower.includes('kafka')
+  ) {
+    return {
+      title: 'Kafka Consumer Static Membership 리밸런싱 억제 흐름',
+      chart: `sequenceDiagram
+    autonumber
+    participant K8s as K8s Worker Pod (group.instance.id)
+    participant Coord as Kafka Group Coordinator
+    participant Part as Partition 0..N
+
+    Note over K8s,Coord: Pod 롤링 배포 (재시작 발생)
+    K8s->>Coord: Pod 종료 전 LeaveGroup 패킷 전송 생략
+    Note over Coord: session.timeout.ms (45초) 동안 파티션 홀드!
+    Note over Coord: 불필요한 리밸런싱 스톰 (Rebalance Storm) 방지
+    K8s->>Coord: Pod 복구 완료 후 동일 group.instance.id로 JoinGroup
+    Coord-->>K8s: 기존 파티션 소유권 즉시 복구 (Zero-Rebalance)`
+    };
+  }
+
+  // 5. DB / PostgreSQL / pgvector
+  if (
+    note.category === 'DB' ||
+    tagsStr.includes('postgres') ||
+    tagsStr.includes('pgvector') ||
+    tagsStr.includes('hnsw')
+  ) {
+    return {
+      title: 'PostgreSQL 16 & pgvector HNSW 인덱스 파이프라인',
+      chart: `flowchart LR
+    App["Spring Boot API"] -->|포트 6432| PgBouncer["PgBouncer 트랜잭션 풀러"]
+    PgBouncer -->|최대 50 커넥션 유지| Postgres[("PostgreSQL 16 Engine")]
+    Postgres --> Docs["knowledge_documents (원장)"]
+    Postgres --> Embeddings["knowledge_embeddings (768차원)"]
+    Embeddings --> HNSW["HNSW Vector Index (m=16, ef=64)"]
+    HNSW -.->|서브밀리초 검색| RAG["RAG 추론 컨텍스트"]`
+    };
+  }
+
+  // 6. External Webhook / Payment API
+  if (note.category === '연계' || titleLower.includes('webhook') || tagsStr.includes('webhook')) {
+    return {
+      title: '카카오페이 웹훅 수신 & 비동기 지수 백오프 워크플로우',
+      chart: `sequenceDiagram
+    autonumber
+    actor PG as PG사 (카카오페이)
+    participant Ingress as 웹훅 수신 엔드포인트
+    participant Queue as Redis 멱등성 큐
+    participant Worker as 비동기 결제 처리 워커
+
+    PG->>Ingress: POST /v2/payments/webhook
+    Ingress->>Queue: 웹훅 페이로드 큐 적재
+    Ingress-->>PG: 200 OK (5초 타임아웃 방어)
+    Queue->>Worker: 페이로드 소비 & 서명 검증
+    alt 결제 처리 성공
+        Worker-->>Worker: 주문 상태 확정 (COMPLETED)
+    else 일시적 처리 실패 (재시도)
+        Worker->>Queue: 지수 백오프 재시도 (1분, 5분, 15분)`
+    };
+  }
+
+  // 7. General Default Fallback Workflow
+  return {
+    title: `${note.title} 아키텍처 워크플로우`,
+    chart: `flowchart TD
+    Doc["${note.title}"] --> Cat["카테고리: ${note.category}"]
+    Doc --> Links["연결 백링크 (${note.backlinksCount}개)"]
+    Doc --> Status["상태: ${note.statusBadge}"]`
+  };
+}
 
 interface NotesViewProps {
   notes: NoteItem[];
@@ -39,8 +188,13 @@ interface NotesViewProps {
   onSelectNote: (id: string | null) => void;
   onAddNote: (note: Partial<NoteItem>) => void;
   onUpdateNote?: (note: NoteItem, toastMsg?: string) => void;
+  onDeleteNote?: (id: string) => void;
   onShowToast: (msg: string) => void;
   activeWorkspace: Workspace;
+  workspaces?: Workspace[];
+  onSelectWorkspace?: (ws: Workspace) => void;
+  initialTagFilter?: string | null;
+  onClearTagFilter?: () => void;
 }
 
 export const NotesView: React.FC<NotesViewProps> = ({
@@ -49,11 +203,22 @@ export const NotesView: React.FC<NotesViewProps> = ({
   onSelectNote,
   onAddNote,
   onUpdateNote,
+  onDeleteNote,
   onShowToast,
-  activeWorkspace
+  activeWorkspace,
+  workspaces = [],
+  onSelectWorkspace,
+  initialTagFilter,
+  onClearTagFilter
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [activeTag, setActiveTag] = useState<string | null>(initialTagFilter || null);
+
+  React.useEffect(() => {
+    if (initialTagFilter) {
+      setActiveTag(initialTagFilter);
+    }
+  }, [initialTagFilter]);
   const [quickCaptureText, setQuickCaptureText] = useState('');
   const [isCapturing, setIsCapturing] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -62,6 +227,18 @@ export const NotesView: React.FC<NotesViewProps> = ({
   const [isEditingContent, setIsEditingContent] = useState(false);
   const [editContentText, setEditContentText] = useState('');
   const [editTitleText, setEditTitleText] = useState('');
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // Close more-menu on outside click
+  React.useEffect(() => {
+    if (!isMoreMenuOpen) return;
+    const handler = () => setIsMoreMenuOpen(false);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isMoreMenuOpen]);
 
   // If a note is selected, render the Detailed Note View (Image 7)
   const activeNote = notes.find((n) => n.id === selectedNoteId);
@@ -172,8 +349,27 @@ export const NotesView: React.FC<NotesViewProps> = ({
   };
 
   const handleAddBacklink = () => {
+    if (!activeNote) return;
+    const newLink = '[[주문 서비스 ERD]]';
+    const alreadyLinked = (activeNote.connectedNodes || []).some(
+      (n) => n.replace(/\[\[|\]\]/g, '').trim().toLowerCase() === '주문 서비스 erd'
+    );
+    if (alreadyLinked) {
+      onShowToast('이미 연결된 백링크입니다.');
+      return;
+    }
+    const updatedNodes = [...(activeNote.connectedNodes || []), newLink];
+    if (onUpdateNote) {
+      onUpdateNote(
+        {
+          ...activeNote,
+          connectedNodes: updatedNodes,
+          backlinksCount: updatedNodes.length
+        },
+        `${newLink}와 양방향 백링크가 연결되었습니다.`
+      );
+    }
     setBacklinkAdded(true);
-    onShowToast('[[주문 서비스 ERD]]와 양방향 백링크가 연결되었습니다.');
   };
 
   const handleReRefine = () => {
@@ -184,15 +380,230 @@ export const NotesView: React.FC<NotesViewProps> = ({
     }, 1200);
   };
 
+  // AI Quick Actions
+  const handleAiSummary = () => {
+    if (!activeNote) return;
+    const current = activeNote.content || activeNote.excerpt || '';
+    if (current.includes('💡 **AI 핵심 아키텍처 요약**')) {
+      onShowToast('이미 문서에 AI 요약 콜아웃이 포함되어 있습니다.');
+      return;
+    }
+    const lines = current.split('\n').filter((l) => l.trim() && !l.startsWith('#') && !l.startsWith('>'));
+    const summaryText = lines.slice(0, 2).join(' ') || `${activeNote.title}에 관한 핵심 아키텍처 및 분산 시스템 설정 명세입니다.`;
+    const summaryBlock = `> [!NOTE]\n> **💡 AI 핵심 아키텍처 요약**\n> ${summaryText}\n\n`;
+    const updated: NoteItem = {
+      ...activeNote,
+      content: summaryBlock + current,
+      updatedAt: '방금 전'
+    };
+    onUpdateNote?.(updated, `'${activeNote.title}' 문서 본문에 AI 요약 콜아웃이 생성되었습니다.`);
+  };
+
+  const handleAutoBacklinks = () => {
+    if (!activeNote) return;
+    const existing = new Set((activeNote.connectedNodes || []).map((t) => t.replace(/\[\[|\]\]/g, '').trim().toLowerCase()));
+    const toAdd: string[] = [];
+
+    semanticRecommendations.forEach(({ note: rNote }) => {
+      if (!existing.has(rNote.title.toLowerCase())) {
+        toAdd.push(`[[${rNote.title}]]`);
+        existing.add(rNote.title.toLowerCase());
+      }
+    });
+
+    unlinkedMentions.forEach((uNote) => {
+      if (!existing.has(uNote.title.toLowerCase())) {
+        toAdd.push(`[[${uNote.title}]]`);
+        existing.add(uNote.title.toLowerCase());
+      }
+    });
+
+    if (toAdd.length === 0) {
+      onShowToast('추천할 신규 백링크가 이미 모두 연결되어 있습니다.');
+      return;
+    }
+
+    const nextConnected = [...(activeNote.connectedNodes || []), ...toAdd];
+    const updated: NoteItem = {
+      ...activeNote,
+      connectedNodes: nextConnected,
+      backlinksCount: nextConnected.length,
+      updatedAt: '방금 전'
+    };
+    onUpdateNote?.(updated, `${toAdd.length}개의 연관 문서가 자동 양방향 백링크로 연결되었습니다.`);
+  };
+
+  const handleGenerateDiagram = () => {
+    if (!activeNote) return;
+    const current = activeNote.content || activeNote.excerpt || '';
+    if (current.includes('```mermaid')) {
+      onShowToast('이미 문서에 Mermaid 다이어그램이 포함되어 있습니다.');
+      return;
+    }
+    const diagramTemplate = `\n\n## 📊 시스템 연계 아키텍처 다이어그램\n\`\`\`mermaid\nflowchart TD\n    Client["사용자 / 클라이언트 요청"] --> Ingress["API Gateway"]\n    Ingress --> Svc["${activeNote.title}"]\n    Svc --> DB["PostgreSQL 16 & pgvector"]\n    Svc --> Cache["Redis 분산 캐시"]\n    Svc -.-> Queue["Kafka 이벤트 스트리밍"]\n\`\`\`\n`;
+    const updated: NoteItem = {
+      ...activeNote,
+      content: current + diagramTemplate,
+      updatedAt: '방금 전'
+    };
+    onUpdateNote?.(updated, `'${activeNote.title}' 문서에 최신 Mermaid 아키텍처 다이어그램이 추가되었습니다.`);
+  };
+
+  const handleGenerateToc = () => {
+    if (!activeNote) return;
+    const current = activeNote.content || activeNote.excerpt || '';
+    if (current.includes('📑 목차 구조')) {
+      onShowToast('이미 목차 구조가 문서 상단에 포함되어 있습니다.');
+      return;
+    }
+    const headingMatches = Array.from(current.matchAll(/^(#{1,3})\s+(.+)$/gm));
+    if (headingMatches.length === 0) {
+      onShowToast('문서 내에 추출할 마크다운 헤딩(#) 구조가 없습니다.');
+      return;
+    }
+    const tocItems = headingMatches.map((m) => {
+      const level = m[1].length;
+      const title = m[2].trim();
+      const indent = '  '.repeat(level - 1);
+      return `${indent}- [${title}](#${encodeURIComponent(title)})`;
+    });
+    const tocBlock = `### 📑 목차 구조\n${tocItems.join('\n')}\n\n---\n\n`;
+    const updated: NoteItem = {
+      ...activeNote,
+      content: tocBlock + current,
+      updatedAt: '방금 전'
+    };
+    onUpdateNote?.(updated, '목차 구조가 문서 상단에 정리되었습니다.');
+  };
+
+  const handleConnectedNodeClick = (nodeText: string) => {
+    const cleanTitle = nodeText.replace(/\[\[|\]\]/g, '').trim().toLowerCase();
+    const found = notes.find(
+      (n) =>
+        n.title.toLowerCase() === cleanTitle ||
+        n.title.toLowerCase().includes(cleanTitle) ||
+        cleanTitle.includes(n.title.toLowerCase())
+    );
+    if (found) {
+      onSelectNote(found.id);
+      onShowToast(`'${found.title}' 문서로 이동했습니다.`);
+    } else {
+      onShowToast(`'[[${cleanTitle}]]' 문서를 지식 저장소에서 찾을 수 없습니다.`);
+    }
+  };
+
+  const handleQuickVoice = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      onShowToast('현재 브라우저에서는 Web Speech API 음성 인식이 지원되지 않습니다.');
+      return;
+    }
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    try {
+      const rec = new SpeechRecognition();
+      rec.lang = 'ko-KR';
+      rec.continuous = false;
+      rec.onstart = () => {
+        setIsRecording(true);
+        onShowToast('음성을 듣고 있습니다. 마이크에 말씀해주세요...');
+      };
+      rec.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setQuickCaptureText((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        onShowToast(`음성 입력 완료: "${transcript}"`);
+      };
+      rec.onerror = () => {
+        setIsRecording(false);
+      };
+      rec.onend = () => {
+        setIsRecording(false);
+      };
+      recognitionRef.current = rec;
+      rec.start();
+    } catch {
+      onShowToast('음성 인식 시작 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleQuickSnippet = () => {
+    const snippet = '```typescript\n// 신규 아키텍처 스니펫\ninterface SystemConfig {\n  serviceName: string;\n  version: string;\n}\n```\n';
+    setQuickCaptureText((prev) => prev + (prev ? '\n' : '') + snippet);
+    onShowToast('코드 스니펫 템플릿이 입력창에 삽입되었습니다.');
+  };
+
+  const handleImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const imgMd = `\n![${file.name}](local-upload://${file.name})\n`;
+      setQuickCaptureText((prev) => prev + (prev ? '\n' : '') + imgMd);
+      onShowToast(`'${file.name}' 이미지 참조 마크다운이 추가되었습니다.`);
+    }
+  };
+
+  const handleShowAllNotes = () => {
+    setActiveTag(null);
+    setSearchQuery('');
+    onClearTagFilter?.();
+    onShowToast(`전체 ${notes.length}건의 지식 목록을 표시합니다.`);
+  };
+
+  // Dynamic filter pills and metrics derived from real notes
+  const dynamicFilterPills = useMemo(() => {
+    const tagMap = new Map<string, number>();
+    for (const n of notes) {
+      for (const t of n.tags || []) {
+        const clean = t.startsWith('#') ? t : `#${t}`;
+        tagMap.set(clean, (tagMap.get(clean) || 0) + 1);
+      }
+    }
+    const sorted = Array.from(tagMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([tag]) => tag);
+
+    const colors = ['text-[#d2bbff]', 'text-[#4cd7f6]', 'text-[#4edea3]', 'text-[#ccc3d8]'];
+    if (sorted.length === 0) {
+      return [
+        { label: '#인프라', color: 'text-[#d2bbff]' },
+        { label: '#DB', color: 'text-[#4cd7f6]' },
+        { label: '#Kafka', color: 'text-[#4edea3]' },
+        { label: '#Spring', color: 'text-[#ccc3d8]' }
+      ];
+    }
+    return sorted.map((label, idx) => ({ label, color: colors[idx % colors.length] }));
+  }, [notes]);
+
+  const totalNotesCount = notes.length;
+  const refinedNotesCount = useMemo(
+    () => notes.filter((n) => n.badgeType === 'ai-refined' || n.statusBadge?.includes('정제')).length,
+    [notes]
+  );
+  const totalBacklinksCount = useMemo(
+    () => notes.reduce((sum, n) => sum + (n.connectedNodes?.length || 0), 0),
+    [notes]
+  );
+
   // Filter notes
-  const filteredNotes = notes.filter((n) => {
-    const matchesSearch =
-      n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      n.excerpt.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      n.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesTag = activeTag ? n.tags.includes(activeTag) : true;
-    return matchesSearch && matchesTag;
-  });
+  const filteredNotes = notes
+    .filter((n) => {
+      const matchesSearch =
+        n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        n.excerpt.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        n.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesTag = activeTag ? n.tags.includes(activeTag) : true;
+      return matchesSearch && matchesTag;
+    })
+    .sort((a, b) => {
+      // Sort by updatedAtRaw (ms timestamp) descending — most recent first
+      // Fall back to 0 if missing (e.g. before server restart)
+      const aTime = a.updatedAtRaw ?? 0;
+      const bTime = b.updatedAtRaw ?? 0;
+      return bTime - aTime;
+    });
 
   /* -------------------------------------------------------------
      VIEW 1: DETAILED NOTE EDITOR VIEW (Image 7)
@@ -241,19 +652,35 @@ export const NotesView: React.FC<NotesViewProps> = ({
                 {activeNote.title}
               </h1>
             )}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5">              {/* Direct Edit & Delete Buttons */}
               {!isEditingContent ? (
-                <button
-                  onClick={() => {
-                    setIsEditingContent(true);
-                    setEditTitleText(activeNote.title);
-                    setEditContentText(activeNote.content || activeNote.excerpt);
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#4cd7f6] text-xs font-mono transition-colors"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  <span>직접 편집</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      setIsEditingContent(true);
+                      setEditContentText(activeNote.content || activeNote.excerpt || '');
+                      setEditTitleText(activeNote.title);
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] hover:text-white text-xs font-mono transition-colors shadow-sm cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>직접 편집</span>
+                  </button>
+                  {onDeleteNote && (
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`'${activeNote.title}' 지식 문서를 정말 삭제하시겠습니까?`)) {
+                          onDeleteNote(activeNote.id);
+                        }
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#3d1820] hover:bg-[#52202b] text-[#ffb4ab] text-xs font-mono transition-colors shadow-sm cursor-pointer"
+                      title="문서 영구 삭제"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>삭제</span>
+                    </button>
+                  )}
+                </div>
               ) : (
                 <div className="flex items-center gap-1.5">
                   <button
@@ -287,9 +714,56 @@ export const NotesView: React.FC<NotesViewProps> = ({
                   </button>
                 </div>
               )}
-              <button className="p-2 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] transition-colors">
-                <MoreHorizontal className="w-4 h-4" />
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+                  className="p-2 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] transition-colors"
+                  title="더 보기"
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+                {isMoreMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1.5 w-44 bg-[#1e1f26] border border-[#2e3547] rounded-xl shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(window.location.href);
+                        onShowToast('문서 링크가 클립보드에 복사되었습니다.');
+                        setIsMoreMenuOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-mono text-[#ccc3d8] hover:bg-[#282a30] hover:text-[#e2e2eb] rounded-lg flex items-center gap-2 transition-colors"
+                    >
+                      <Share2 className="w-3.5 h-3.5 text-[#4cd7f6]" />
+                      링크 공유
+                    </button>
+                    <button
+                      onClick={() => {
+                        const md = activeNote ? (activeNote.content || activeNote.excerpt || '') : '';
+                        navigator.clipboard.writeText(md);
+                        onShowToast('마크다운 원문이 클립보드에 복사되었습니다.');
+                        setIsMoreMenuOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-mono text-[#ccc3d8] hover:bg-[#282a30] hover:text-[#e2e2eb] rounded-lg flex items-center gap-2 transition-colors"
+                    >
+                      <Copy className="w-3.5 h-3.5 text-[#4edea3]" />
+                      마크다운 복사
+                    </button>
+                    {onDeleteNote && activeNote && (
+                      <button
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          if (window.confirm(`'${activeNote.title}' 문서를 삭제하시겠습니까?`)) {
+                            onDeleteNote(activeNote.id);
+                          }
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs font-mono text-[#ffb4ab] hover:bg-[#3d1820] rounded-lg flex items-center gap-2 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        문서 삭제
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -298,29 +772,33 @@ export const NotesView: React.FC<NotesViewProps> = ({
         <div className="sticky top-14 z-20 px-4 py-2 bg-[#111319]/95 backdrop-blur-md border-b border-[#1f2432] shadow-md">
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5">
             <button
-              onClick={() => onShowToast('AI 요약: Saga 패턴으로 분산 트랜잭션 롤백 및 상태 보상 메커니즘을 정의함.')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#7c3aed] text-white text-xs font-medium shadow-sm hover:bg-[#6d28d9] transition-transform active:scale-95 shrink-0"
+              onClick={handleAiSummary}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#7c3aed] text-white text-xs font-medium shadow-sm hover:bg-[#6d28d9] transition-transform active:scale-95 shrink-0 cursor-pointer"
+              title="현재 문서의 핵심 요약 콜아웃을 생성하여 본문에 삽입"
             >
               <Sparkles className="w-3.5 h-3.5" />
               <span>AI 요약</span>
             </button>
             <button
-              onClick={() => onShowToast('2개의 연관 문서와 자동 양방향 링크가 등록되었습니다.')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#4cd7f6] text-xs font-mono shrink-0 transition-transform active:scale-95"
+              onClick={handleAutoBacklinks}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#4cd7f6] text-xs font-mono shrink-0 transition-transform active:scale-95 cursor-pointer"
+              title="추천 연관 문서들을 분석하여 양방향 백링크 자동 연결"
             >
               <Share2 className="w-3.5 h-3.5" />
               <span>자동 양방향 링크</span>
             </button>
             <button
-              onClick={() => onShowToast('아래 Mermaid 다이어그램이 최신 플로우로 재생성되었습니다.')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] text-xs font-mono shrink-0 transition-transform active:scale-95"
+              onClick={handleGenerateDiagram}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] text-xs font-mono shrink-0 transition-transform active:scale-95 cursor-pointer"
+              title="아키텍처 토폴로지 Mermaid 다이어그램을 생성하여 본문에 삽입"
             >
               <Workflow className="w-3.5 h-3.5" />
               <span>다이어그램 생성</span>
             </button>
             <button
-              onClick={() => onShowToast('목차 구조가 문서 상단에 정리되었습니다.')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] text-xs font-mono shrink-0 transition-transform active:scale-95"
+              onClick={handleGenerateToc}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] text-xs font-mono shrink-0 transition-transform active:scale-95 cursor-pointer"
+              title="본문 헤딩을 파싱하여 목차 블록 자동 삽입"
             >
               <ListTree className="w-3.5 h-3.5" />
               <span>표/목차 정리</span>
@@ -366,8 +844,9 @@ export const NotesView: React.FC<NotesViewProps> = ({
                   ).map((node) => (
                     <div
                       key={node}
-                      onClick={() => onShowToast(`백링크 노드 ${node} 연결 탐색`)}
+                      onClick={() => handleConnectedNodeClick(node)}
                       className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1e1f26] text-[#4cd7f6] font-mono text-[11px] cursor-pointer hover:bg-[#282a30] hover:text-[#acedff] transition-colors border border-[#2e3547]"
+                      title="해당 연결 문서로 바로 이동"
                     >
                       <LinkIcon className="w-3 h-3" />
                       <span>{node}</span>
@@ -547,8 +1026,12 @@ export const NotesView: React.FC<NotesViewProps> = ({
             </div>
           ) : activeNote.content ? (
             <div className="space-y-4">
-              <div className="p-4 sm:p-5 rounded-xl bg-[#0c0e14] border border-[#2e3547] text-xs font-mono text-[#e2e2eb] whitespace-pre-wrap leading-relaxed overflow-x-auto max-h-[480px]">
-                {activeNote.content}
+              <div className="p-4 sm:p-6 rounded-xl bg-[#0c0e14] border border-[#2e3547] text-[#e2e2eb] leading-relaxed overflow-x-auto max-h-[540px]">
+                <MarkdownRenderer
+                  content={activeNote.content}
+                  notes={notes}
+                  onSelectNote={onSelectNote}
+                />
               </div>
             </div>
           ) : (
@@ -556,9 +1039,11 @@ export const NotesView: React.FC<NotesViewProps> = ({
               <h2 className="text-lg font-semibold text-[#e2e2eb] flex items-center gap-2">
                 <span className="text-[#7c3aed]">#</span> {activeNote.title}
               </h2>
-              <p className="text-sm text-[#ccc3d8] leading-relaxed">
-                {activeNote.excerpt}
-              </p>
+              <MarkdownRenderer
+                content={activeNote.excerpt}
+                notes={notes}
+                onSelectNote={onSelectNote}
+              />
             </div>
           )}
 
@@ -599,80 +1084,21 @@ export const NotesView: React.FC<NotesViewProps> = ({
             </div>
           )}
 
-          {/* Architecture Topology Diagram or Saga Flowchart */}
-          {activeNote.id === 'note-sys-arch-spec' || activeNote.category === 'DB' ? (
+          {/* Architecture Topology Diagram or Dynamic Mermaid Workflow */}
+          {activeNote.id === 'note-sys-arch-spec' ? (
             <ArchitectureDiagram />
-          ) : (
-            <div className="p-4 rounded-xl bg-[#191b22] border border-[#2e3547] space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Workflow className="w-4 h-4 text-[#4edea3]" />
-                  <span className="text-sm font-medium text-[#e2e2eb]">Saga Orchestrator Workflow</span>
-                </div>
-                <span className="text-[11px] font-mono text-[#958da1]">Interactive Flow (Mermaid-v11)</span>
-              </div>
-
-              {/* Visual SVG Diagram */}
-              <div className="w-full bg-[#0c0e14] rounded-lg p-3 flex justify-center overflow-x-auto">
-                <svg
-                  className="w-full max-w-[360px] h-[140px]"
-                  viewBox="0 0 340 130"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  {/* Step 1: Order Initiated */}
-                  <rect x="10" y="45" width="85" height="40" rx="6" fill="#1e1f26" stroke="#2e3547" />
-                  <text x="52" y="65" fill="#e2e2eb" fontFamily="JetBrains Mono" fontSize="10" fontWeight="500" textAnchor="middle">
-                    주문 요청
-                  </text>
-                  <text x="52" y="77" fill="#958da1" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle">
-                    Order Initiated
-                  </text>
-
-                  {/* Arrow 1 to 2 */}
-                  <path d="M95 65 H125" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" />
-                  <polygon points="125,62 131,65 125,68" fill="#7c3aed" />
-
-                  {/* Step 2: Saga Coordinator */}
-                  <rect x="131" y="38" width="96" height="54" rx="6" fill="#282a30" stroke="#7c3aed" />
-                  <rect x="133" y="40" width="92" height="50" rx="4" fill="#191b22" />
-                  <text x="179" y="60" fill="#4cd7f6" fontFamily="JetBrains Mono" fontSize="10" fontWeight="600" textAnchor="middle">
-                    Saga Coordinator
-                  </text>
-                  <text x="179" y="73" fill="#4edea3" fontFamily="JetBrains Mono" fontSize="8" textAnchor="middle">
-                    Orchestration
-                  </text>
-                  <circle cx="179" cy="83" r="2.5" fill="#4edea3" />
-
-                  {/* Arrow to Step 3 */}
-                  <path d="M227 55 Q245 55 245 35 H255" fill="none" stroke="#4cd7f6" strokeWidth="1.5" strokeDasharray="3 3" />
-                  <polygon points="255,32 260,35 255,38" fill="#4cd7f6" />
-
-                  {/* Arrow to Step 4 */}
-                  <path d="M227 75 Q245 75 245 95 H255" fill="none" stroke="#ffb4ab" strokeWidth="1.5" />
-                  <polygon points="255,92 260,95 255,98" fill="#ffb4ab" />
-
-                  {/* Step 3: Success Target */}
-                  <rect x="260" y="15" width="70" height="36" rx="5" fill="#1e1f26" stroke="#4edea3" strokeWidth="0.8" />
-                  <text x="295" y="33" fill="#4edea3" fontFamily="JetBrains Mono" fontSize="9" textAnchor="middle">
-                    결제/재고 확정
-                  </text>
-                  <text x="295" y="43" fill="#958da1" fontFamily="JetBrains Mono" fontSize="7" textAnchor="middle">
-                    Commit Event
-                  </text>
-
-                  {/* Step 4: Compensation Target */}
-                  <rect x="260" y="78" width="70" height="36" rx="5" fill="#1e1f26" stroke="#ffb4ab" strokeWidth="0.8" />
-                  <text x="295" y="96" fill="#ffb4ab" fontFamily="JetBrains Mono" fontSize="9" textAnchor="middle">
-                    보상 롤백
-                  </text>
-                  <text x="295" y="106" fill="#958da1" fontFamily="JetBrains Mono" fontSize="7" textAnchor="middle">
-                    Rollback Trigger
-                  </text>
-                </svg>
-              </div>
-            </div>
-          )}
+          ) : (() => {
+            const diagramData = getMermaidChartForNote(activeNote);
+            if (diagramData) {
+              return (
+                <MermaidRenderer
+                  chart={diagramData.chart}
+                  title={diagramData.title}
+                />
+              );
+            }
+            return null;
+          })()}
         </div>
 
         {/* Bottom Floating Stats & AI Re-refine Bar */}
@@ -685,7 +1111,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
               </div>
               <div>
                 <span className="text-[#958da1]">자수: </span>
-                <span className="text-[#e2e2eb] font-semibold">{activeNote.charCount || 4819}</span>
+                <span className="text-[#e2e2eb] font-semibold">{activeNote.charCount || activeNote.content?.length || 0}</span>
               </div>
               <div className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-[#4cd7f6]" />
@@ -735,17 +1161,25 @@ export const NotesView: React.FC<NotesViewProps> = ({
 
           {/* Quick Filter Pills */}
           <div className="flex items-center gap-1.5 mt-2.5 overflow-x-auto no-scrollbar py-0.5">
-            {[
-              { label: '#인프라', color: 'text-[#d2bbff]' },
-              { label: '#DB설계', color: 'text-[#4cd7f6]' },
-              { label: '@배포로그', color: 'text-[#4edea3]' },
-              { label: '✨미분류 정제', color: 'text-[#ccc3d8]' }
-            ].map((pill) => (
+            {activeTag && (
+              <button
+                onClick={() => {
+                  setActiveTag(null);
+                  if (onClearTagFilter) onClearTagFilter();
+                }}
+                className="flex items-center gap-1 px-2 py-1 rounded-full bg-[#3d1820] border border-[#ffb4ab]/40 text-[#ffb4ab] text-xs font-mono shrink-0 hover:bg-[#52202b] transition-colors"
+                title="필터 초기화"
+              >
+                <span>✕ 초기화 ({activeTag})</span>
+              </button>
+            )}
+            {dynamicFilterPills.map((pill) => (
               <button
                 key={pill.label}
                 onClick={() => {
                   if (activeTag === pill.label) {
                     setActiveTag(null);
+                    if (onClearTagFilter) onClearTagFilter();
                   } else {
                     setActiveTag(pill.label);
                   }
@@ -786,24 +1220,35 @@ export const NotesView: React.FC<NotesViewProps> = ({
 
           <div className="flex items-center justify-between pt-1">
             <div className="flex items-center gap-1.5">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageSelected}
+                className="hidden"
+              />
               <button
-                onClick={() => onShowToast('음성 캡처 모드가 대기 중입니다.')}
-                className="w-8 h-8 rounded-lg bg-[#191b22] hover:bg-[#282a30] text-[#958da1] hover:text-[#4cd7f6] flex items-center justify-center transition-colors"
-                title="음성 메모 녹음"
+                onClick={handleQuickVoice}
+                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                  isRecording
+                    ? 'bg-[#ffb4ab] text-[#690005] animate-pulse'
+                    : 'bg-[#191b22] hover:bg-[#282a30] text-[#958da1] hover:text-[#4cd7f6]'
+                }`}
+                title={isRecording ? '음성 녹음 중지' : '음성 메모 녹음 (Web Speech API)'}
               >
                 <Mic className="w-4 h-4" />
               </button>
               <button
-                onClick={() => onShowToast('코드 스니펫 서식이 삽입되었습니다.')}
+                onClick={handleQuickSnippet}
                 className="w-8 h-8 rounded-lg bg-[#191b22] hover:bg-[#282a30] text-[#958da1] hover:text-[#d2bbff] flex items-center justify-center transition-colors"
-                title="스니펫 추가"
+                title="코드 스니펫 서식 삽입"
               >
                 <Code2 className="w-4 h-4" />
               </button>
               <button
-                onClick={() => onShowToast('스크린샷 캡처 도구가 활성화되었습니다.')}
+                onClick={() => fileInputRef.current?.click()}
                 className="w-8 h-8 rounded-lg bg-[#191b22] hover:bg-[#282a30] text-[#958da1] hover:text-[#4edea3] flex items-center justify-center transition-colors"
-                title="사진/다이어그램 캡처"
+                title="사진/스크린샷 첨부 (마크다운 이미지 삽입)"
               >
                 <Camera className="w-4 h-4" />
               </button>
@@ -826,12 +1271,12 @@ export const NotesView: React.FC<NotesViewProps> = ({
             <div className="flex items-center justify-between">
               <Clock className="w-4 h-4 text-[#4cd7f6]" />
               <span className="text-[10px] font-mono text-[#03b5d3] bg-[#282a30] px-1 py-0.5 rounded">
-                +12m
+                실시간
               </span>
             </div>
             <div className="mt-2">
               <div className="text-xl sm:text-2xl font-bold text-[#e2e2eb]">
-                48<span className="text-xs text-[#958da1] font-normal ml-0.5">개</span>
+                {totalNotesCount}<span className="text-xs text-[#958da1] font-normal ml-0.5">개</span>
               </div>
               <p className="text-[11px] text-[#958da1] mt-0.5 truncate">최근 동기화 노트</p>
             </div>
@@ -841,12 +1286,12 @@ export const NotesView: React.FC<NotesViewProps> = ({
             <div className="flex items-center justify-between">
               <Sparkles className="w-4 h-4 text-[#d2bbff]" />
               <span className="text-[10px] font-mono text-[#4edea3] bg-[#282a30] px-1 py-0.5 rounded">
-                오늘
+                정제완료
               </span>
             </div>
             <div className="mt-2">
               <div className="text-xl sm:text-2xl font-bold text-[#d2bbff]">
-                14<span className="text-xs text-[#958da1] font-normal ml-0.5">건</span>
+                {refinedNotesCount}<span className="text-xs text-[#958da1] font-normal ml-0.5">건</span>
               </div>
               <p className="text-[11px] text-[#958da1] mt-0.5 truncate">AI 자동 정제 완료</p>
             </div>
@@ -856,12 +1301,12 @@ export const NotesView: React.FC<NotesViewProps> = ({
             <div className="flex items-center justify-between">
               <Layers className="w-4 h-4 text-[#4edea3]" />
               <span className="text-[10px] font-mono text-[#d2bbff] bg-[#282a30] px-1 py-0.5 rounded">
-                실시간
+                토폴로지
               </span>
             </div>
             <div className="mt-2">
               <div className="text-xl sm:text-2xl font-bold text-[#e2e2eb]">
-                312<span className="text-xs text-[#958da1] font-normal ml-0.5">개</span>
+                {totalBacklinksCount}<span className="text-xs text-[#958da1] font-normal ml-0.5">개</span>
               </div>
               <p className="text-[11px] text-[#958da1] mt-0.5 truncate">지식망 연결 노드</p>
             </div>
@@ -876,42 +1321,21 @@ export const NotesView: React.FC<NotesViewProps> = ({
             <Pin className="w-4 h-4 text-[#d2bbff]" />
             <h2 className="text-sm font-semibold text-[#e2e2eb]">고정 및 활성 스페이스</h2>
           </div>
-          <span className="text-xs font-mono text-[#958da1]">3개 고정됨</span>
+          <span className="text-xs font-mono text-[#958da1]">
+            {(workspaces && workspaces.length > 0 ? workspaces : [activeWorkspace]).length}개 활성
+          </span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {[
-            {
-              icon: '🚀',
-              name: '플랫폼 엔지니어링',
-              path: '/core/infra-mesh',
-              docs: 28,
-              nodes: 142,
-              sync: '98% 동기화',
-              dotColor: 'bg-[#4cd7f6]'
-            },
-            {
-              icon: '⚡',
-              name: '코어 결제 시스템 API',
-              path: '/services/payment-v2',
-              docs: 14,
-              nodes: 89,
-              sync: '정제 검토중',
-              dotColor: 'bg-[#d2bbff]'
-            },
-            {
-              icon: '📦',
-              name: 'K8s 클라우드 인프라',
-              path: '/manifests/argocd',
-              docs: 36,
-              nodes: 81,
-              sync: '최신 상태',
-              dotColor: 'bg-[#4edea3]'
-            }
-          ].map((sp) => (
+          {(workspaces && workspaces.length > 0 ? workspaces.slice(0, 3) : [activeWorkspace]).map((sp) => (
             <div
-              key={sp.name}
-              className="bg-[#191b22] hover:bg-[#1e1f26] border border-[#2e3547] rounded-xl p-3 flex flex-col justify-between shadow-md cursor-pointer transition-all group"
+              key={sp.id || sp.name}
+              onClick={() => {
+                onSelectWorkspace?.(sp);
+                onShowToast(`'${sp.name}' 스페이스로 전환되었습니다.`);
+              }}
+              className="bg-[#191b22] hover:bg-[#1e1f26] border border-[#2e3547] hover:border-[#4cd7f6]/50 rounded-xl p-3 flex flex-col justify-between shadow-md cursor-pointer transition-all group"
+              title={`${sp.name} 공간으로 즉시 전환`}
             >
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
@@ -923,14 +1347,14 @@ export const NotesView: React.FC<NotesViewProps> = ({
                     <span className="text-[10px] font-mono text-[#958da1]">{sp.path}</span>
                   </div>
                 </div>
-                <span className={`w-2 h-2 rounded-full ${sp.dotColor} shadow-[0_0_6px_rgba(76,215,246,0.6)]`}></span>
+                <span className="w-2 h-2 rounded-full bg-[#4cd7f6] shadow-[0_0_6px_rgba(76,215,246,0.6)]"></span>
               </div>
               <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#2e3547]/50 text-[10px] font-mono">
                 <div className="flex items-center gap-1.5">
-                  <span className="px-1.5 py-0.5 rounded bg-[#282a30] text-[#4cd7f6]">문서 {sp.docs}</span>
-                  <span className="px-1.5 py-0.5 rounded bg-[#282a30] text-[#4edea3]">노드 {sp.nodes}</span>
+                  <span className="px-1.5 py-0.5 rounded bg-[#282a30] text-[#4cd7f6]">문서 {sp.docCount}</span>
+                  <span className="px-1.5 py-0.5 rounded bg-[#282a30] text-[#4edea3]">노드 {sp.nodeCount}</span>
                 </div>
-                <span className="text-[#958da1]">{sp.sync}</span>
+                <span className="text-[#958da1]">{sp.syncPercent}% 동기화</span>
               </div>
             </div>
           ))}
@@ -945,8 +1369,9 @@ export const NotesView: React.FC<NotesViewProps> = ({
             <h2 className="text-sm font-semibold text-[#e2e2eb]">최근 업데이트된 지식</h2>
           </div>
           <button
-            onClick={() => onShowToast('전체 48건의 지식 목록을 갱신했습니다.')}
-            className="text-xs font-mono text-[#958da1] hover:text-[#d2bbff] transition-colors flex items-center gap-0.5"
+            onClick={handleShowAllNotes}
+            className="text-xs font-mono text-[#958da1] hover:text-[#d2bbff] transition-colors flex items-center gap-0.5 cursor-pointer"
+            title="모든 검색어 및 태그 필터를 해제하고 전체 목록 표시"
           >
             <span>전체보기</span>
             <ArrowRight className="w-3 h-3" />

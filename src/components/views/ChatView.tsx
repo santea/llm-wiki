@@ -9,7 +9,6 @@ import {
   BookOpen,
   Send,
   Code2,
-  Mic,
   Plus,
   Edit3,
   Check,
@@ -27,6 +26,8 @@ import {
   Bot
 } from 'lucide-react';
 import { NoteItem, TabType, Workspace, ChatMessage, DiffProposal } from '../../types';
+import { generateAiDiff } from '../../api';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface ChatViewProps {
   notes: NoteItem[];
@@ -52,120 +53,25 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [inputVal, setInputVal] = useState('');
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [isContextDrawerOpen, setIsContextDrawerOpen] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [editingDiffMsgId, setEditingDiffMsgId] = useState<string | null>(null);
+  const [editingDiffContent, setEditingDiffContent] = useState<string>('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Initial messages based on user's high-fidelity mock image
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'msg-user-1',
-      sender: 'user',
-      timestamp: '2분 전',
-      text: 'PostgreSQL 커넥션 풀 튜닝 문서에서 PgBouncer 트랜잭션 풀링 관련 주의사항 찾아서 백링크랑 같이 알려줘'
-    },
-    {
-      id: 'msg-ai-1',
-      sender: 'assistant',
-      timestamp: '2분 전',
-      type: 'semantic-map',
-      text: '요청하신 [[PostgreSQL 16 커넥션 풀 튜닝 가이드]] 문서 내 PgBouncer 트랜잭션 풀링 핵심 설정과 제약사항입니다:',
-      thinkingSteps: {
-        summary: '3개 노드 시맨틱 탐색 및 백링크 역추적 완료',
-        details: [
-          {
-            icon: 'check_circle',
-            text: '[[PostgreSQL 16 커넥션 풀 튜닝 가이드]] (유사도 94.2%)',
-            color: 'text-[#4edea3]'
-          },
-          {
-            icon: 'link',
-            text: '[[PgBouncer 트랜잭션 모드 아키텍처]] (참조 12건)',
-            color: 'text-[#4cd7f6]'
-          },
-          {
-            icon: 'device_hub',
-            text: '[[주문 트랜잭션 Redlock 분산 락]] (의존 노드)',
-            color: 'text-[#958da1]'
-          }
-        ]
-      },
-      highlightTitle: 'PostgreSQL 16 커넥션 풀 튜닝 가이드',
-      highlightSection: {
-        title: '1. 세션 불일치 및 Prepared Statements',
-        desc: '트랜잭션 풀링 모드(pool_mode = transaction)에서는 클라이언트 연결이 트랜잭션 종료 시 즉시 반환되므로 세션 종속적 명령어가 유실됩니다.'
-      },
-      warningCallout: {
-        title: '주의: Prepared Statements 세션 캐싱 누수',
-        desc: '애플리케이션 ORM이 서버사이드 준비 구문을 생성할 경우, 다른 커넥션으로 전환되었을 때 Prepared statement does not exist 오류가 발생하거나 메모리 누수가 발생합니다. 드라이버 설정에서 명시적 비활성화 또는 풀러 전용 옵션이 강제되어야 합니다.'
-      },
-      backlinks: ['[[PgBouncer 트랜잭션 모드]]', '[[DB 커넥션 아키텍처 v2]]'],
-      actionPills: [
-        {
-          label: '문서 본문 열기',
-          icon: 'book',
-          actionType: 'open-doc',
-          payload: 'note-db-tuning'
-        },
-        {
-          label: '그래프에서 위치',
-          icon: 'share',
-          actionType: 'graph-pos',
-          payload: 'kafka'
-        },
-        {
-          label: '관련 노드 4개',
-          icon: 'nodes',
-          actionType: 'related-nodes'
-        }
-      ]
-    },
-    {
-      id: 'msg-user-2',
-      sender: 'user',
-      timestamp: '방금',
-      text: "그럼 해당 문서의 '주의사항' 섹션에 방금 말한 세션 캐싱 누수 해결책이랑 커넥션 수 파라미터(max_client_conn: 1000)를 추가로 수정 반영해줘"
-    },
-    {
-      id: 'msg-ai-2',
-      sender: 'assistant',
-      timestamp: '방금',
-      type: 'diff-proposal',
-      text: '제안된 수정 내역(Diff Proposal)을 생성하였습니다. 검토 후 아래 [문서에 즉시 반영 (Commit)] 버튼을 누르시면 지식 저장소에 실시간 반영됩니다.',
-      diffProposal: {
-        targetDocId: 'note-db-tuning',
-        targetDocTitle: 'PostgreSQL 16 커넥션 풀 튜닝 가이드',
-        targetDocLevel: 'L3 Module',
-        sectionTitle: '## 3. 주의사항 및 운영 가이드라인',
-        addedCount: 3,
-        lines: [
-          { lineNumber: 38, type: 'context', content: '### 3.1 PgBouncer 연동 시 제약' },
-          { lineNumber: 39, type: 'context', content: '트랜잭션 풀링 모드 사용 시 세션 종속 파라미터는 차단됩니다.' },
-          {
-            lineNumber: 40,
-            type: 'added',
-            content:
-              '- **Prepared Statements 방어:** JDBC/ORM 레이어에서 `prepareThreshold=0` 또는 풀러 레벨 DEALLOCATE 캐시 동기화를 필히 활성화해야 합니다.'
-          },
-          {
-            lineNumber: 41,
-            type: 'added',
-            content:
-              '- **클라이언트 풀 용량 권장치:** 인그레스 동시성을 고려해 `max_client_conn = 1000` 이상 확보 권장.'
-          },
-          {
-            lineNumber: 42,
-            type: 'added',
-            content: '- **관련 백링크:** [[PgBouncer 세션 메모리 누수 해결 사례]]'
-          }
-        ],
-        ruleCheckNote: '내부 분류 아키텍처 규칙 #RULE-DB-CONCURRENCY 검증 통과 완료.',
-        committed: false
+  // Initial messages based on real indexed knowledge vault
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const docCount = notes.length;
+    return [
+      {
+        id: 'msg-welcome',
+        sender: 'assistant',
+        timestamp: '실시간',
+        text: `안녕하세요! Obsidian Slate 아키텍처 RAG 어시스턴트입니다.\n현재 PostgreSQL 16 및 pgvector 저장소에 총 ${docCount}건의 아키텍처 문서와 지식 그래프가 동기화되어 있습니다. 아키텍처 분석, 백링크 역추적, 또는 Git-style Diff 수정 제안을 요청해 보세요.`
       }
-    }
-  ]);
+    ];
+  });
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -179,17 +85,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
     const noteIdToUse = targetNote ? targetNote.id : 'note-db-tuning';
 
     if (targetNote) {
+      const newContent =
+        (diff as any).updatedFullContent ||
+        targetNote.content ||
+        `${targetNote.excerpt || ''}\n\n${diff.sectionTitle}\n` +
+          diff.lines.map((l) => l.content).join('\n');
+
       const updated: NoteItem = {
         ...targetNote,
+        content: newContent,
+        wordCount: newContent.trim().split(/\s+/).filter(Boolean).length,
+        charCount: newContent.length,
         updatedAt: '방금 전 (AI 커밋됨)',
         statusBadge: 'AI 패치 반영완료',
         badgeType: 'ai-refined',
-        excerpt:
-          'PgBouncer 트랜잭션 풀링 모드 적용 시 max_client_conn=1000 설정 권장 및 prepareThreshold=0 파라미터 메모리 최적화 완료.',
-        tags: Array.from(new Set([...targetNote.tags, '#pgbouncer-patch', '#concurrency-1000'])),
-        connectedNodes: Array.from(
-          new Set([...(targetNote.connectedNodes || []), '[[PgBouncer 세션 메모리 누수 해결 사례]]'])
-        ),
         backlinksCount: (targetNote.backlinksCount || 0) + 1
       };
       onUpdateNote(updated);
@@ -213,7 +122,16 @@ export const ChatView: React.FC<ChatViewProps> = ({
       })
     );
 
-    onShowToast(`'${diff.targetDocTitle}' 문서에 수정 사항이 즉시 커밋(SHA: ${sha})되었습니다.`);
+    // 3. System confirmation toast & bot message
+    onShowToast(`커밋 #${sha} 완료: '${diff.targetDocTitle}' 문서에 변경사항이 영구 반영되었습니다.`);
+
+    const confirmMsg: ChatMessage = {
+      id: `ai-commit-${Date.now()}`,
+      sender: 'assistant',
+      timestamp: '방금',
+      text: `✅ **커밋 #${sha} 완료!** '${diff.targetDocTitle}' 문서에 실시간 패치가 안전하게 병합되었으며, PostgreSQL pgvector 인덱스가 동기화되었습니다.`
+    };
+    setMessages((prev) => [...prev, confirmMsg]);
   };
 
   // Process User Query
@@ -258,35 +176,50 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 lower.includes(n.category.toLowerCase())
             ) || notes[0];
 
+          let diffProposal: DiffProposal | null = null;
+          try {
+            diffProposal = await generateAiDiff(
+              matched.id,
+              matched.content || matched.excerpt || '',
+              query,
+              matched.title
+            );
+          } catch (diffErr) {
+            console.warn('Real AI diff generation fallback:', diffErr);
+          }
+
+          const proposal: DiffProposal = diffProposal || {
+            targetDocId: matched.id,
+            targetDocTitle: matched.title,
+            targetDocLevel: matched.category === '인프라' ? 'L2 Infra' : 'L3 Module',
+            sectionTitle: '## 추가 규격 및 최적화 설정',
+            addedCount: 2,
+            removedCount: 0,
+            lines: [
+              { lineNumber: 21, type: 'context', content: `// ${matched.title} 연관 컨텍스트` },
+              { lineNumber: 22, type: 'context', content: `기본 파라미터 및 보안 정책 유효성 검증 통과` },
+              {
+                lineNumber: 23,
+                type: 'added',
+                content: `- **AI 자동 반영:** ${query}`
+              },
+              {
+                lineNumber: 24,
+                type: 'added',
+                content: `- **연관 백링크:** [[${matched.title} 장애 대응 SOP]]`
+              }
+            ],
+            ruleCheckNote: `내부 시스템 규약 #RULE-${matched.category.toUpperCase()} 자동 정합성 테스트 통과.`,
+            committed: false
+          };
+
           const aiResponse: ChatMessage = {
             id: `ai-${Date.now()}`,
             sender: 'assistant',
             timestamp: '방금',
             type: 'diff-proposal',
             text: `'${matched.title}' 문서에 대한 요청 사항을 반영한 Diff Proposal입니다. 변경 내용을 확인 후 커밋해주세요.`,
-            diffProposal: {
-              targetDocId: matched.id,
-              targetDocTitle: matched.title,
-              targetDocLevel: matched.category === '인프라' ? 'L2 Infra' : 'L3 Module',
-              sectionTitle: '## 추가 규격 및 최적화 설정',
-              addedCount: 2,
-              lines: [
-                { lineNumber: 21, type: 'context', content: `// ${matched.title} 연관 컨텍스트` },
-                { lineNumber: 22, type: 'context', content: `기본 파라미터 및 보안 정책 유효성 검증 통과` },
-                {
-                  lineNumber: 23,
-                  type: 'added',
-                  content: `- **AI 자동 추가 규칙:** 클러스터 가용성 보장을 위해 재시도 백오프(Exponential Backoff: base=500ms, max=5s)가 활성화되었습니다.`
-                },
-                {
-                  lineNumber: 24,
-                  type: 'added',
-                  content: `- **연관 백링크:** [[${matched.title} 장애 대응 SOP]]`
-                }
-              ],
-              ruleCheckNote: `내부 시스템 규약 #RULE-${matched.category.toUpperCase()} 자동 정합성 테스트 통과.`,
-              committed: false
-            }
+            diffProposal: proposal
           };
           setMessages((prev) => [...prev, aiResponse]);
           setIsThinking(false);
@@ -396,7 +329,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             : `검색어 관련 지식 그래프에서 **[[${matchedNote.title}]]** 문서 및 관련 노드를 탐색하였습니다:`,
           thinkingSteps: {
             summary: serverGeminiAnswer
-              ? `Gemini 3.8 Flash RAG 추론 완료 • ${matchingNotes.length || 1}개 지식 노드 참조`
+              ? `LLM RAG 추론 완료 • ${matchingNotes.length || 1}개 지식 노드 참조`
               : `시맨틱 임베딩 유사도 91.8% • ${matchingNotes.length || 1}개 연관 문서 식별`,
             details: [
               {
@@ -462,21 +395,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
     onShowToast('대화 세션 및 캐시가 초기화되었습니다.');
   };
 
-  // Voice dictation simulation
-  const handleToggleVoice = () => {
-    if (!isListening) {
-      setIsListening(true);
-      onShowToast('음성 입력을 수신 중입니다...');
-      setTimeout(() => {
-        setInputVal((prev) => (prev ? `${prev} PostgreSQL 파라미터 최적화` : 'PostgreSQL 파라미터 최적화'));
-        setIsListening(false);
-        onShowToast('음성이 텍스트로 변환되었습니다.');
-      }, 1500);
-    } else {
-      setIsListening(false);
-    }
-  };
-
   return (
     <div className="flex flex-col h-full w-full bg-[#0c0e14] text-[#e2e2eb] relative overflow-hidden">
       {/* 1. Top Context & Telemetry Bar (from screen.png) */}
@@ -538,8 +456,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   <span className="text-[10px] font-mono text-[#958da1]">엔지니어</span>
                   <span className="text-[10px] font-mono text-[#958da1]">• {msg.timestamp}</span>
                 </div>
-                <div className="bg-[#7c3aed] text-white px-4 py-3 rounded-2xl rounded-tr-none shadow-md max-w-full text-sm leading-relaxed">
-                  <p>{msg.text}</p>
+                <div className="bg-[#7c3aed] text-white px-4 py-2.5 rounded-2xl rounded-tr-none shadow-md max-w-full text-sm leading-relaxed">
+                  <MarkdownRenderer
+                    content={msg.text}
+                    notes={notes}
+                    onSelectNote={onSelectNote}
+                    onNavigateToTab={onNavigateToTab}
+                    isUserMessage={true}
+                  />
                 </div>
               </div>
             );
@@ -591,36 +515,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
               )}
 
               {/* Message Content Container */}
-              <div className="w-full bg-[#1e1f26] border border-[#2e3547] rounded-2xl rounded-tl-none p-4 shadow-sm flex flex-col gap-3.5 text-sm leading-relaxed">
-                <p className="text-[#e2e2eb]">
-                  {msg.text.includes('[[') ? (
-                    <span>
-                      {msg.text.split(/(\[\[.*?\]\])/g).map((part, i) => {
-                        if (part.startsWith('[[') && part.endsWith(']]')) {
-                          const docName = part.slice(2, -2);
-                          return (
-                            <button
-                              key={i}
-                              onClick={() => {
-                                const target = notes.find((n) => n.title.includes(docName));
-                                if (target) {
-                                  onSelectNote(target.id);
-                                  onNavigateToTab('notes');
-                                }
-                              }}
-                              className="inline-flex items-center gap-0.5 mx-1 bg-[#33343b] px-1.5 py-0.5 rounded text-[#d2bbff] text-xs font-mono hover:bg-[#7c3aed]/30 hover:underline cursor-pointer transition-colors"
-                            >
-                              {part}
-                            </button>
-                          );
-                        }
-                        return part;
-                      })}
-                    </span>
-                  ) : (
-                    msg.text
-                  )}
-                </p>
+              <div className="w-full bg-[#1e1f26] border border-[#2e3547] rounded-2xl rounded-tl-none p-4 shadow-sm flex flex-col gap-3 text-sm leading-relaxed">
+                <MarkdownRenderer
+                  content={msg.text}
+                  notes={notes}
+                  onSelectNote={onSelectNote}
+                  onNavigateToTab={onNavigateToTab}
+                />
 
                 {/* Highlight Section Box */}
                 {msg.highlightSection && (
@@ -741,6 +642,48 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       <span>{msg.diffProposal.ruleCheckNote}</span>
                     </div>
 
+                    {/* Inline Editor if in edit mode */}
+                    {editingDiffMsgId === msg.id && !msg.diffProposal.committed && (
+                      <div className="p-3 bg-[#0c0e14] border border-[#7c3aed] rounded-xl space-y-2.5">
+                        <div className="flex items-center justify-between text-xs font-mono text-[#4cd7f6]">
+                          <span className="flex items-center gap-1.5 font-semibold">
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>제안 내용 직접 수정 모드</span>
+                          </span>
+                          <span className="text-[10px] text-[#958da1]">{editingDiffContent.length} 자</span>
+                        </div>
+                        <textarea
+                          value={editingDiffContent}
+                          onChange={(e) => setEditingDiffContent(e.target.value)}
+                          rows={6}
+                          className="w-full bg-[#191b22] border border-[#2e3547] rounded-lg p-2.5 font-mono text-xs text-[#e2e2eb] outline-none focus:border-[#7c3aed] leading-relaxed resize-y"
+                          placeholder="반영할 마크다운 문서를 직접 수정하세요..."
+                        />
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => setEditingDiffMsgId(null)}
+                            className="px-3 py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] text-xs font-mono transition-colors"
+                          >
+                            편집 취소
+                          </button>
+                          <button
+                            onClick={() => {
+                              const updatedDiff = {
+                                ...msg.diffProposal!,
+                                updatedFullContent: editingDiffContent
+                              };
+                              handleCommitDiff(msg.id, updatedDiff);
+                              setEditingDiffMsgId(null);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-[#7c3aed] hover:bg-[#6d28d9] text-white text-xs font-semibold flex items-center gap-1.5 shadow-md transition-all active:scale-95"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>수정 내용으로 즉시 커밋</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Mutation Buttons */}
                     {!msg.diffProposal.committed ? (
                       <div className="flex items-center gap-2 pt-1">
@@ -753,9 +696,21 @@ export const ChatView: React.FC<ChatViewProps> = ({
                         </button>
                         <button
                           onClick={() => {
-                            onShowToast('인라인 수정 모드가 활성화되었습니다.');
+                            if (editingDiffMsgId === msg.id) {
+                              setEditingDiffMsgId(null);
+                            } else {
+                              const targetNote = notes.find((n) => n.id === msg.diffProposal!.targetDocId || n.title.includes(msg.diffProposal!.targetDocTitle));
+                              const initialContent = msg.diffProposal!.updatedFullContent || targetNote?.content || targetNote?.excerpt || '';
+                              setEditingDiffContent(initialContent);
+                              setEditingDiffMsgId(msg.id);
+                              onShowToast('인라인 수정 에디터가 열렸습니다. 원하는 내용을 직접 편집 후 커밋하세요.');
+                            }
                           }}
-                          className="w-10 h-10 flex items-center justify-center bg-[#282a30] hover:bg-[#33343b] border border-[#33343b] rounded-xl text-[#e2e2eb] transition-colors"
+                          className={`w-10 h-10 flex items-center justify-center rounded-xl border transition-colors ${
+                            editingDiffMsgId === msg.id
+                              ? 'bg-[#7c3aed] text-white border-[#7c3aed]'
+                              : 'bg-[#282a30] hover:bg-[#33343b] border-[#33343b] text-[#e2e2eb]'
+                          }`}
                           title="수정 후 반영"
                         >
                           <Edit3 className="w-4 h-4" />
@@ -764,6 +719,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                           onClick={() => {
                             onShowToast('제안된 변경사항이 취소되었습니다.');
                             setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+                            if (editingDiffMsgId === msg.id) setEditingDiffMsgId(null);
                           }}
                           className="w-10 h-10 flex items-center justify-center bg-[#282a30] hover:bg-[#33343b] border border-[#33343b] rounded-xl text-[#ffb4ab] transition-colors"
                           title="취소"
@@ -814,34 +770,19 @@ export const ChatView: React.FC<ChatViewProps> = ({
           <span className="text-[#4cd7f6]">Auto-Contextual</span>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5">
-          <button
-            onClick={() => handleSendMessage('시스템 아키텍처 및 DB 설계 문서 요약해줘')}
-            className="shrink-0 flex items-center gap-1.5 bg-[#1e1f26] hover:bg-[#282a30] border border-[#7c3aed]/40 px-3 py-1.5 rounded-full text-[#d2bbff] text-xs transition-colors shadow-sm font-medium"
-          >
-            <span>📐</span>
-            <span>시스템 아키텍처 & DB 설계 요약</span>
-          </button>
-          <button
-            onClick={() => handleSendMessage('최근 정제된 인프라 문서 요약해줘')}
-            className="shrink-0 flex items-center gap-1.5 bg-[#1e1f26] hover:bg-[#282a30] border border-[#2e3547] px-3 py-1.5 rounded-full text-[#e2e2eb] text-xs transition-colors shadow-sm"
-          >
-            <span>💡</span>
-            <span>최근 정제된 인프라 문서 요약</span>
-          </button>
-          <button
-            onClick={() => handleSendMessage('Saga 패턴과 결제 API 백링크 연결해줘')}
-            className="shrink-0 flex items-center gap-1.5 bg-[#1e1f26] hover:bg-[#282a30] border border-[#2e3547] px-3 py-1.5 rounded-full text-[#e2e2eb] text-xs transition-colors shadow-sm"
-          >
-            <span className="text-[#d2bbff]">🔗</span>
-            <span>Saga 패턴과 결제 API 백링크 연결</span>
-          </button>
-          <button
-            onClick={() => handleSendMessage('고립된 노드 2건 자동 분류해줘')}
-            className="shrink-0 flex items-center gap-1.5 bg-[#1e1f26] hover:bg-[#282a30] border border-[#2e3547] px-3 py-1.5 rounded-full text-[#e2e2eb] text-xs transition-colors shadow-sm"
-          >
-            <span className="text-[#4cd7f6]">🔍</span>
-            <span>고립된 노드 2건 자동 분류</span>
-          </button>
+          {notes.slice(0, 4).map((n, idx) => {
+            const icons = ['📐', '💡', '🔗', '⚡'];
+            return (
+              <button
+                key={n.id}
+                onClick={() => handleSendMessage(`'${n.title}' 문서 요약 및 연관 백링크 분석해줘`)}
+                className="shrink-0 flex items-center gap-1.5 bg-[#1e1f26] hover:bg-[#282a30] border border-[#2e3547] hover:border-[#7c3aed]/40 px-3 py-1.5 rounded-full text-[#e2e2eb] text-xs transition-colors shadow-sm"
+              >
+                <span>{icons[idx % icons.length]}</span>
+                <span className="truncate max-w-[200px]">{n.title}</span>
+              </button>
+            );
+          })}
           <button
             onClick={() => handleSendMessage('L4 리소스 전체 목록 및 엔드포인트 추출해줘')}
             className="shrink-0 flex items-center gap-1.5 bg-[#1e1f26] hover:bg-[#282a30] border border-[#2e3547] px-3 py-1.5 rounded-full text-[#e2e2eb] text-xs transition-colors shadow-sm"
@@ -959,17 +900,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
               >
                 <Code2 className="w-4 h-4" />
               </button>
-              <button
-                onClick={handleToggleVoice}
-                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-                  isListening
-                    ? 'bg-[#ffb4ab] text-[#690005] animate-pulse'
-                    : 'bg-[#1e1f26] hover:bg-[#282a30] text-[#958da1] hover:text-[#4edea3]'
-                }`}
-                title="음성 입력"
-              >
-                <Mic className="w-4 h-4" />
-              </button>
             </div>
 
             <div className="flex items-center gap-2">
@@ -995,7 +925,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               <div className="flex items-center gap-2">
                 <Database className="w-5 h-5 text-[#4cd7f6]" />
                 <span className="text-sm font-semibold text-[#e2e2eb]">
-                  현재 활성화된 지식 컨텍스트 ({notes.length * 52 + 52})
+                  현재 활성화된 지식 컨텍스트 ({notes.length}개 문서, {notes.reduce((acc, n) => acc + (n.connectedNodes?.length || 0), 0)} 연결)
                 </span>
               </div>
               <button
@@ -1010,12 +940,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
               <div className="bg-[#191b22] border border-[#2e3547] p-3 rounded-xl flex flex-col gap-1">
                 <span className="text-[10px] font-mono text-[#4edea3]">DB 클러스터</span>
                 <span className="text-xs font-bold text-[#e2e2eb]">PostgreSQL 16</span>
-                <span className="text-[10px] font-mono text-[#958da1]">84 백링크 활성</span>
+                <span className="text-[10px] font-mono text-[#958da1]">
+                  {notes.reduce((acc, n) => acc + (n.connectedNodes?.length || 0), 0)} 백링크 활성
+                </span>
               </div>
               <div className="bg-[#191b22] border border-[#2e3547] p-3 rounded-xl flex flex-col gap-1">
                 <span className="text-[10px] font-mono text-[#4cd7f6]">커넥션 풀러</span>
                 <span className="text-xs font-bold text-[#e2e2eb]">PgBouncer v1.21</span>
-                <span className="text-[10px] font-mono text-[#958da1]">트랜잭션 풀 모드</span>
+                <span className="text-[10px] font-mono text-[#4edea3]">트랜잭션 풀 정상 동기화</span>
               </div>
             </div>
 

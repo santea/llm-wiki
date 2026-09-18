@@ -24,6 +24,7 @@ interface TaxonomyViewProps {
   onOpenSandbox: () => void;
   onOpenNewRuleModal: () => void;
   onShowToast: (msg: string) => void;
+  totalNotesCount?: number;
 }
 
 export const TaxonomyView: React.FC<TaxonomyViewProps> = ({
@@ -32,11 +33,15 @@ export const TaxonomyView: React.FC<TaxonomyViewProps> = ({
   activeWorkspace,
   onOpenSandbox,
   onOpenNewRuleModal,
-  onShowToast
+  onShowToast,
+  totalNotesCount = 12
 }) => {
-  const [promptText, setPromptText] = useState(
-    '이 공간에서는 사내 인프라 IP 노출 시 즉시 마스킹 처리하고, 소스코드 저장 시 단위 테스트 여부를 체크하여 메타데이터에 기록할 것'
-  );
+  const [promptText, setPromptText] = useState(() => {
+    return (
+      localStorage.getItem('space_guideline_prompt') ||
+      '이 공간에서는 사내 인프라 IP 노출 시 즉시 마스킹 처리하고, 소스코드 저장 시 단위 테스트 여부를 체크하여 메타데이터에 기록할 것'
+    );
+  });
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
 
   // Helper to map icon string to lucide icon
@@ -114,9 +119,9 @@ export const TaxonomyView: React.FC<TaxonomyViewProps> = ({
             </div>
 
             <div className="bg-[#1e1f26] border border-[#2e3547] p-3 rounded-lg flex flex-col justify-between">
-              <span className="text-[11px] text-[#958da1] font-mono">24h 정제 노트</span>
+              <span className="text-[11px] text-[#958da1] font-mono">24h 색인 지식</span>
               <div className="flex items-baseline gap-1 mt-1">
-                <span className="text-lg sm:text-xl font-bold text-[#4cd7f6]">142</span>
+                <span className="text-lg sm:text-xl font-bold text-[#4cd7f6]">{totalNotesCount}</span>
                 <span className="text-[10px] text-[#958da1]">건</span>
               </div>
             </div>
@@ -224,9 +229,11 @@ export const TaxonomyView: React.FC<TaxonomyViewProps> = ({
             </div>
             <button
               onClick={() => {
-                setIsEditingPrompt(!isEditingPrompt);
+                const nextState = !isEditingPrompt;
+                setIsEditingPrompt(nextState);
                 if (isEditingPrompt) {
-                  onShowToast('가이드라인 프롬프트가 저장되었습니다.');
+                  localStorage.setItem('space_guideline_prompt', promptText);
+                  onShowToast('가이드라인 프롬프트가 영구 저장되었습니다.');
                 }
               }}
               className="text-xs font-mono text-[#4cd7f6] hover:text-[#d2bbff] flex items-center gap-1 transition-colors"

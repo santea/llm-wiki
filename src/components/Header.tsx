@@ -8,7 +8,8 @@ import {
   Check,
   Zap,
   PanelLeft,
-  Bot
+  Bot,
+  FolderArchive
 } from 'lucide-react';
 import { Workspace, ViewMode, SystemNotification } from '../types';
 
@@ -25,6 +26,7 @@ export interface HeaderProps {
   isOpenSidebar?: boolean;
   onToggleSidebar?: () => void;
   onOpenChat?: () => void;
+  onOpenVaultModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -38,9 +40,12 @@ export const Header: React.FC<HeaderProps> = ({
   unreadNotifsCount,
   isOpenSidebar = true,
   onToggleSidebar,
-  onOpenChat
+  onOpenChat,
+  onOpenVaultModal
 }) => {
   const [dropdownOpen, setDropdownOpen] = React.useState(false);
+  const [profileOpen, setProfileOpen] = React.useState(false);
+  const [toolsOpen, setToolsOpen] = React.useState(false);
 
   return (
     <header className="h-14 w-full shrink-0 z-30 bg-[#111319]/95 backdrop-blur-xl border-b border-[#1f2432] shadow-[0_1px_8px_rgba(0,0,0,0.35)] relative">
@@ -64,7 +69,11 @@ export const Header: React.FC<HeaderProps> = ({
 
           <div className="relative">
             <button
-              onClick={() => setDropdownOpen(!dropdownOpen)}
+              onClick={() => {
+                setDropdownOpen(!dropdownOpen);
+                setProfileOpen(false);
+                setToolsOpen(false);
+              }}
               className="flex items-center gap-2 bg-[#191b22] hover:bg-[#1e1f26] border border-[#2e3547]/80 px-2.5 py-1.5 rounded-lg text-left transition-all min-h-[36px] max-w-[200px] sm:max-w-[240px] lg:max-w-[280px]"
             >
               <span className="text-base">{activeWorkspace.icon}</span>
@@ -153,6 +162,18 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* Vault Import / Export Button */}
+          {onOpenVaultModal && (
+            <button
+              onClick={onOpenVaultModal}
+              title="옵시디언 마크다운 볼트 가져오기 / 내보내기"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#191b22] hover:bg-[#1e1f26] border border-[#2e3547] text-[#ccc3d8] hover:text-[#e2e2eb] text-xs font-mono transition-all"
+            >
+              <FolderArchive className="w-3.5 h-3.5 text-[#4cd7f6]" />
+              <span className="hidden lg:inline">볼트 입출력</span>
+            </button>
+          )}
+
           {/* PC Desktop vs Mobile View Switcher */}
           <div className="flex items-center p-0.5 rounded-lg bg-[#191b22] border border-[#2e3547] text-xs">
             <button
@@ -204,18 +225,116 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* Quick Terminal Tune */}
-          <button
-            onClick={onOpenCommandPalette}
-            className="w-9 h-9 flex items-center justify-center rounded-lg bg-[#191b22] hover:bg-[#1e1f26] border border-[#2e3547] text-[#ccc3d8] hover:text-[#e2e2eb] transition-colors"
-            title="설정 및 도구"
-          >
-            <Sliders className="w-4 h-4 text-[#958da1]" />
-          </button>
+          {/* Quick Tools & Settings Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                setToolsOpen(!toolsOpen);
+                setProfileOpen(false);
+                setDropdownOpen(false);
+              }}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg border transition-colors ${
+                toolsOpen
+                  ? 'bg-[#282a30] text-[#4cd7f6] border-[#4cd7f6]/50'
+                  : 'bg-[#191b22] hover:bg-[#1e1f26] border-[#2e3547] text-[#ccc3d8] hover:text-[#e2e2eb]'
+              }`}
+              title="설정 및 도구 메뉴"
+            >
+              <Sliders className="w-4 h-4 text-[#4cd7f6]" />
+            </button>
 
-          {/* User Profile Avatar */}
-          <div className="w-8 h-8 rounded-full bg-[#7c3aed] text-white flex items-center justify-center text-xs font-semibold shadow-md ml-1 ring-1 ring-[#d2bbff]/30">
-            P
+            {toolsOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-60 bg-[#1e1f26] border border-[#2e3547] rounded-xl shadow-2xl p-2 space-y-1.5 z-50 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-2 py-1 text-[10px] font-mono text-[#958da1] uppercase border-b border-[#2e3547]">
+                  빠른 설정 & 도구
+                </div>
+                <button
+                  onClick={() => {
+                    setToolsOpen(false);
+                    onOpenCommandPalette();
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between text-xs text-[#ccc3d8] hover:bg-[#282a30] hover:text-[#e2e2eb] transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <Search className="w-3.5 h-3.5 text-[#4cd7f6]" />
+                    커맨드 팔레트
+                  </span>
+                  <kbd className="text-[10px] font-mono text-[#958da1] bg-[#191b22] px-1 py-0.5 rounded">⌘K</kbd>
+                </button>
+                {onOpenVaultModal && (
+                  <button
+                    onClick={() => {
+                      setToolsOpen(false);
+                      onOpenVaultModal();
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg flex items-center gap-2 text-xs text-[#ccc3d8] hover:bg-[#282a30] hover:text-[#e2e2eb] transition-colors"
+                  >
+                    <FolderArchive className="w-3.5 h-3.5 text-[#d2bbff]" />
+                    <span>볼트 가져오기 / 내보내기</span>
+                  </button>
+                )}
+                <div className="px-2 py-1 text-[10px] font-mono text-[#958da1] border-t border-[#2e3547] flex justify-between">
+                  <span>뷰 모드</span>
+                  <span className="text-[#4edea3] font-semibold">{viewMode === 'desktop' ? 'PC 데스크톱' : '모바일 프레임'}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* User Profile Avatar with Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                setProfileOpen(!profileOpen);
+                setToolsOpen(false);
+                setDropdownOpen(false);
+              }}
+              className="w-8 h-8 rounded-full bg-[#7c3aed] text-white flex items-center justify-center text-xs font-semibold shadow-md ml-1 ring-1 ring-[#d2bbff]/30 hover:opacity-90 active:scale-95 transition-all cursor-pointer"
+              title="사용자 프로필 및 시스템 세션 정보"
+            >
+              P
+            </button>
+
+            {profileOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-64 bg-[#1e1f26] border border-[#2e3547] rounded-xl shadow-2xl p-3 space-y-2.5 z-50 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center gap-2.5 pb-2 border-b border-[#2e3547]">
+                  <div className="w-9 h-9 rounded-full bg-[#7c3aed] text-white flex items-center justify-center font-bold text-sm">
+                    P
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-xs font-bold text-[#e2e2eb]">Platform Architect</span>
+                    <span className="text-[10px] text-[#4edea3] font-mono">System Admin (Active)</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1 text-[11px] font-mono text-[#958da1]">
+                  <div className="flex justify-between">
+                    <span>DB 세션:</span>
+                    <span className="text-[#e2e2eb]">PostgreSQL 16</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>벡터 인덱스:</span>
+                    <span className="text-[#4cd7f6]">pgvector 768d</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>단축키 탐색:</span>
+                    <span className="text-[#d2bbff]">⌘K / ⌘\</span>
+                  </div>
+                </div>
+
+                <div className="pt-1 border-t border-[#2e3547]">
+                  <button
+                    onClick={() => {
+                      setProfileOpen(false);
+                      onOpenCommandPalette();
+                    }}
+                    className="w-full py-1.5 rounded-lg bg-[#282a30] hover:bg-[#33343b] text-[#ccc3d8] hover:text-white text-xs text-center font-mono transition-colors"
+                  >
+                    커맨드 단축키 안내 ⌘K
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

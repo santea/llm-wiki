@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, FileText, Network, Layers, Sparkles, GitBranch, X, ArrowRight, Bot } from 'lucide-react';
+import { Search, FileText, Network, Layers, Sparkles, GitBranch, X, ArrowRight, Bot, Sliders } from 'lucide-react';
 import { TabType, NoteItem } from '../../types';
 
 interface CommandPaletteModalProps {
@@ -22,22 +22,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
   onOpenNewNote
 }) => {
   const [query, setQuery] = useState('');
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        if (isOpen) onClose();
-      }
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   const quickActions = [
     {
@@ -65,7 +50,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
     {
       id: 'act-graph',
       label: '지식 그래프 열기',
-      sublabel: '148개 노드 양방향 클러스터 탐색',
+      sublabel: `${notes.length}개 노드 양방향 클러스터 탐색`,
       icon: Network,
       color: 'text-[#4cd7f6]',
       action: () => {
@@ -105,6 +90,17 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
         onClose();
         onOpenSandbox();
       }
+    },
+    {
+      id: 'act-prompts',
+      label: 'AI 에이전트 프롬프트 허브',
+      sublabel: '6종 코어 AI 에이전트 프롬프트 관리 & 실시간 샌드박스',
+      icon: Sliders,
+      color: 'text-[#d2bbff]',
+      action: () => {
+        onClose();
+        onSelectTab('prompts');
+      }
     }
   ];
 
@@ -114,6 +110,66 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
       n.excerpt.toLowerCase().includes(query.toLowerCase()) ||
       n.tags.some((t) => t.toLowerCase().includes(query.toLowerCase()))
   );
+
+  const filteredQuickActions = query.trim()
+    ? quickActions.filter(
+        (a) =>
+          a.label.toLowerCase().includes(query.toLowerCase()) ||
+          a.sublabel.toLowerCase().includes(query.toLowerCase())
+      )
+    : quickActions;
+
+  // Flatten items for keyboard navigation
+  const allItems: Array<
+    | { type: 'action'; id: string; action: () => void }
+    | { type: 'note'; id: string; note: NoteItem }
+  > = [
+    ...filteredQuickActions.map((a) => ({ type: 'action' as const, id: a.id, action: a.action })),
+    ...matchedNotes.map((n) => ({ type: 'note' as const, id: n.id, note: n }))
+  ];
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [query]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        if (isOpen) onClose();
+        return;
+      }
+      if (e.key === 'Escape' && isOpen) {
+        onClose();
+        return;
+      }
+      if (!isOpen || allItems.length === 0) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex((prev) => (prev + 1) % allItems.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex((prev) => (prev - 1 + allItems.length) % allItems.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const selected = allItems[selectedIndex];
+        if (selected) {
+          if (selected.type === 'action') {
+            selected.action();
+          } else {
+            onClose();
+            onSelectNote(selected.note.id);
+            onSelectTab('notes');
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose, allItems, selectedIndex, onSelectNote, onSelectTab]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 sm:pt-24 px-4 bg-[#0c0e14]/80 backdrop-blur-md animate-in fade-in duration-150">
@@ -140,71 +196,90 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
         {/* Results List */}
         <div className="max-h-[380px] overflow-y-auto p-2 space-y-4 no-scrollbar">
           {/* Quick Actions */}
-          <div className="space-y-1">
-            <div className="px-2 py-1 text-[11px] font-mono text-[#958da1] uppercase">
-              빠른 실행
-            </div>
-            {quickActions.map((act) => {
-              const Icon = act.icon;
-              return (
-                <button
-                  key={act.id}
-                  onClick={act.action}
-                  className="w-full flex items-center justify-between p-2 rounded-lg text-left hover:bg-[#282a30] transition-colors group"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Icon className={`w-4 h-4 ${act.color}`} />
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold text-[#e2e2eb] group-hover:text-[#4cd7f6] transition-colors">
-                        {act.label}
-                      </span>
-                      <span className="text-[10px] text-[#958da1] font-mono">{act.sublabel}</span>
+          {filteredQuickActions.length > 0 && (
+            <div className="space-y-1">
+              <div className="px-2 py-1 text-[11px] font-mono text-[#958da1] uppercase">
+                빠른 실행
+              </div>
+              {filteredQuickActions.map((act, idx) => {
+                const Icon = act.icon;
+                const isSelected = selectedIndex === idx;
+                return (
+                  <button
+                    key={act.id}
+                    onClick={act.action}
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors group ${
+                      isSelected
+                        ? 'bg-[#282a30] border border-[#7c3aed]/50 text-[#e2e2eb]'
+                        : 'hover:bg-[#282a30] text-[#ccc3d8]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Icon className={`w-4 h-4 ${act.color}`} />
+                      <div className="flex flex-col">
+                        <span className="text-xs font-semibold text-[#e2e2eb] group-hover:text-[#4cd7f6] transition-colors">
+                          {act.label}
+                        </span>
+                        <span className="text-[10px] text-[#958da1] font-mono">{act.sublabel}</span>
+                      </div>
                     </div>
-                  </div>
-                  <ArrowRight className="w-3.5 h-3.5 text-[#958da1] group-hover:text-[#e2e2eb]" />
-                </button>
-              );
-            })}
-          </div>
+                    <ArrowRight className="w-3.5 h-3.5 text-[#958da1] group-hover:text-[#e2e2eb]" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Notes Matching */}
-          <div className="space-y-1 pt-2 border-t border-[#2e3547]">
-            <div className="px-2 py-1 text-[11px] font-mono text-[#958da1] uppercase flex items-center justify-between">
-              <span>매칭된 지식 노트</span>
-              <span>{matchedNotes.length}개</span>
+          {matchedNotes.length > 0 && (
+            <div className="space-y-1 pt-2 border-t border-[#2e3547]">
+              <div className="px-2 py-1 text-[11px] font-mono text-[#958da1] uppercase flex items-center justify-between">
+                <span>매칭된 지식 노트</span>
+                <span>{matchedNotes.length}개</span>
+              </div>
+              {matchedNotes.map((note, nIdx) => {
+                const itemIndex = filteredQuickActions.length + nIdx;
+                const isSelected = selectedIndex === itemIndex;
+                return (
+                  <button
+                    key={note.id}
+                    onClick={() => {
+                      onClose();
+                      onSelectNote(note.id);
+                      onSelectTab('notes');
+                    }}
+                    onMouseEnter={() => setSelectedIndex(itemIndex)}
+                    className={`w-full flex items-center justify-between p-2.5 rounded-lg text-left transition-colors group ${
+                      isSelected
+                        ? 'bg-[#282a30] border border-[#4cd7f6]/50 text-[#e2e2eb]'
+                        : 'hover:bg-[#282a30] text-[#ccc3d8]'
+                    }`}
+                  >
+                    <div className="flex flex-col min-w-0 flex-1 pr-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-1.5 py-0.2 rounded bg-[#191b22] text-[#4cd7f6] text-[10px] font-mono">
+                          {note.category}
+                        </span>
+                        <span className="text-xs font-semibold text-[#e2e2eb] group-hover:text-[#4cd7f6] truncate">
+                          {note.title}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-[#958da1] truncate mt-0.5">{note.excerpt}</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-[#d2bbff] shrink-0">
+                      {note.tags[0]}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            {matchedNotes.map((note) => (
-              <button
-                key={note.id}
-                onClick={() => {
-                  onClose();
-                  onSelectNote(note.id);
-                  onSelectTab('notes');
-                }}
-                className="w-full flex items-center justify-between p-2.5 rounded-lg text-left hover:bg-[#282a30] transition-colors group"
-              >
-                <div className="flex flex-col min-w-0 flex-1 pr-2">
-                  <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.2 rounded bg-[#282a30] text-[#4cd7f6] text-[10px] font-mono">
-                      {note.category}
-                    </span>
-                    <span className="text-xs font-semibold text-[#e2e2eb] group-hover:text-[#4cd7f6] truncate">
-                      {note.title}
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-[#958da1] truncate mt-0.5">{note.excerpt}</span>
-                </div>
-                <span className="text-[10px] font-mono text-[#d2bbff] shrink-0">
-                  {note.tags[0]}
-                </span>
-              </button>
-            ))}
-          </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="px-4 py-2 bg-[#0c0e14] border-t border-[#2e3547] flex items-center justify-between text-[11px] font-mono text-[#958da1]">
-          <span>탐색: ↑ ↓ 선택 / Enter 실행</span>
+          <span className="text-[#4edea3]">탐색: ↑ ↓ 선택 / Enter 실행 (현재 {selectedIndex + 1}/{allItems.length || 1})</span>
           <kbd className="px-1.5 py-0.5 rounded bg-[#1e1f26] border border-[#2e3547] text-[10px]">
             ESC 닫기
           </kbd>

@@ -1,4 +1,4 @@
-export type TabType = 'notes' | 'graph' | 'hierarchy' | 'refinery' | 'taxonomy' | 'chat' | 'settings';
+export type TabType = 'notes' | 'graph' | 'hierarchy' | 'refinery' | 'taxonomy' | 'chat' | 'settings' | 'prompts';
 
 export type ViewMode = 'desktop' | 'mobile';
 
@@ -31,6 +31,7 @@ export interface NoteItem {
   category: 'DB' | '연계' | '인프라' | '소스코드' | '워크플로우';
   categoryFull: string;
   updatedAt: string;
+  updatedAtRaw?: number; // Unix timestamp (ms) for sorting
   statusBadge: string;
   badgeType: 'ai-refined' | 'spec-done' | 'manual' | 'ai-structured';
   excerpt: string;
@@ -96,7 +97,12 @@ export interface TriageCardData {
   };
   tags: string[];
   backlinks?: string[];
-  targetPath: string;
+  targetPath?: string;
+  codeSnippet?: {
+    filename: string;
+    language: string;
+    code: string;
+  };
 }
 
 export interface HierarchyNode {
@@ -118,6 +124,7 @@ export interface SystemNotification {
   time: string;
   type: 'info' | 'success' | 'warning';
   read: boolean;
+  actionTab?: TabType;
 }
 
 export interface DiffLine {
@@ -132,6 +139,8 @@ export interface DiffProposal {
   targetDocLevel: string;
   sectionTitle: string;
   addedCount: number;
+  removedCount?: number;
+  updatedFullContent?: string;
   lines: DiffLine[];
   ruleCheckNote: string;
   committed?: boolean;
@@ -169,4 +178,29 @@ export interface ChatMessage {
     payload?: string;
   }[];
   diffProposal?: DiffProposal;
+}
+
+export type AgentType =
+  | 'refinery-ingestion'
+  | 'rag-synthesizer'
+  | 'diff-proposer'
+  | 'security-auditor'
+  | 'backlink-recommender'
+  | 'mermaid-architect';
+
+export interface AgentPrompt {
+  id: string;
+  title: string;
+  agentType: AgentType;
+  roleDescription: string;
+  systemPrompt: string;
+  userPromptTemplate: string;
+  variables: string[];
+  model: string;
+  temperature: number;
+  isActive: boolean;
+  version: string;
+  tags: string[];
+  updatedAt?: string;
+  createdAt?: string;
 }
